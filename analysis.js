@@ -6,113 +6,89 @@
  * game review, and interactive visualization tools.
  */
 
+const CLASSIFICATION_DATA = {
+    'Brilliant': { title: 'Brilliant', comment: 'The only good move in a critical position!', color: 'text-teal-400', icon: '!!' },
+    'Theory': { title: 'Book Move', comment: 'A standard opening move from theory.', color: 'text-gray-400', icon: '📖' },
+    'Best': { title: 'Best Move', comment: 'The strongest move, according to the engine.', color: 'text-amber-300', icon: '★' },
+    'Excellent': { title: 'Excellent', comment: 'A strong move that maintains the position\'s potential.', color: 'text-sky-400', icon: '✓' },
+    'Okay': { title: 'Okay', comment: 'A reasonable move, but a better option was available.', color: 'text-green-400', icon: ' ' },
+    'Inaccuracy': { title: 'Inaccuracy', comment: 'This move weakens your position slightly.', color: 'text-yellow-500', icon: '?!' },
+    'Mistake': { title: 'Mistake', comment: 'A significant error that damages your position.', color: 'text-orange-500', icon: '?' },
+    'Blunder': { title: 'Blunder', comment: 'A very bad move that could lead to losing the game.', color: 'text-red-600', icon: '??' }
+};
+
 class AnalysisController {
-    /**
-     * Initializes the AnalysisController.
-     * @param {object} app - The main ChessGame app instance.
-     * @param {Worker} stockfish - The Stockfish engine worker.
-     * @param {object} uiElements - A map of jQuery elements for the analysis UI.
-     */
     constructor(app, stockfish, uiElements) {
         this.app = app;
         this.stockfish = stockfish;
         this.ui = uiElements;
         this.chart = null;
 
-        this.game = new Chess(); // Internal game state for analysis purposes.
+        this.game = new Chess();
         this.state = {
-            currentAnalysisInfo: {},
-            isAnalyzing: false,
-            isReviewing: false,
-            gameReviewData: [],
-            currentMoveIndex: -1,
-            isInfiniteAnalysis: true
+            currentAnalysisInfo: {}, isAnalyzing: false, isReviewing: false,
+            gameReviewData: [], currentMoveIndex: -1, isInfiniteAnalysis: true
         };
 
         this._bindUIEvents();
     }
 
-    /**
-     * Binds event listeners to the analysis UI elements.
-     * @private
-     */
     _bindUIEvents() {
         this.ui.runReviewBtn.on('click', () => this.runGameReview());
         this.ui.infiniteAnalysisToggle.on('change', (e) => {
             this.state.isInfiniteAnalysis = e.target.checked;
-            if (this.state.isInfiniteAnalysis) {
-                this.analyzePosition(this.app.state.reviewGame.fen());
-            } else {
-                this.stockfish.postMessage('stop');
-            }
+            if (this.state.isInfiniteAnalysis) this.analyzePosition(this.app.state.reviewGame.fen());
+            else this.stockfish.postMessage('stop');
         });
         this.ui.analysisMoveList.on('click', '.analysis-move-item', (e) => {
             const moveIndex = parseInt($(e.currentTarget).data('move-index'));
             this.app.navigateToMove(moveIndex);
+            this._showMoveAssessmentDetails(moveIndex);
         });
     }
 
-    /**
-     * Starts the analysis mode for a given game.
-     * @param {Chess} gameInstance - The completed game instance from the main app.
-     */
     start(gameInstance) {
         this.game.load_pgn(gameInstance.pgn());
         this.state.isAnalyzing = true;
         this.state.isReviewing = false;
         this.state.gameReviewData = [];
         this.ui.runReviewBtn.prop('disabled', false).removeClass('bg-red-600').text('Run Game Review');
+        this.ui.moveAssessmentDetails.addClass('hidden').attr('aria-hidden', 'true');
         this._updateMoveList();
         this.analyzePosition(this.app.state.reviewGame.fen());
     }
 
-    /**
-     * Stops the analysis mode.
-     */
     stop() {
         this.state.isAnalyzing = false;
         this.stockfish.postMessage('stop');
-        if (this.chart) {
-            this.chart.destroy();
-            this.chart = null;
-        }
+        if (this.chart) { this.chart.destroy(); this.chart = null; }
     }
     
-    /**
-     * Called by the main app when the board position changes in analysis mode.
-     * @param {string} fen - The FEN of the position to analyze.
-     * @param {number} moveIndex - The index of the current move.
-     */
     onPositionChanged(fen, moveIndex) {
         if (!this.state.isAnalyzing) return;
         this.state.currentMoveIndex = moveIndex;
         this.stockfish.postMessage('stop');
         this._clearAnalysisUI();
         this._updateMoveListHighlight(moveIndex);
+        if (this.state.gameReviewData.length > 0 && moveIndex !== null) {
+            this._showMoveAssessmentDetails(moveIndex);
+        } else {
+            this.ui.moveAssessmentDetails.addClass('hidden').attr('aria-hidden', 'true');
+        }
         if (this.state.isInfiniteAnalysis && !this.state.isReviewing) {
             this.analyzePosition(fen);
         }
     }
 
-    /**
-     * Requests the engine to analyze a given position.
-     * @param {string} fen - The FEN string of the position.
-     */
     analyzePosition(fen) {
         if (!this.state.isAnalyzing || this.state.isReviewing) return;
         this.stockfish.postMessage(`position fen ${fen}`);
         this.stockfish.postMessage('go infinite');
     }
 
-    /**
-     * Handles incoming messages from the Stockfish engine during analysis.
-     * @param {string} message - The message string from the engine.
-     */
     handleEngineMessage(message) {
         if (!this.state.isAnalyzing || this.state.isReviewing) return;
-        if (message.startsWith('info')) {
-            this._parseEngineInfo(message);
-        }
+        if (message.startsWith('info')) this._parseEngineInfo(message);
     }
     
     _parseEngineInfo(message) {
@@ -122,7 +98,6 @@ class AnalysisController {
         const mate = message.match(/score mate (-?\d+)/);
         const pv = message.match(/pv (.+)/);
         const nodes = message.match(/nodes (\d+)/);
-        
         if (depth) info.depth = depth[1];
         if (nodes) info.nodes = parseInt(nodes[1]).toLocaleString();
         if (mate) {
@@ -154,143 +129,160 @@ class AnalysisController {
         const { score, topLine, depth, nodes } = this.state.currentAnalysisInfo;
         if (score) this.ui.evaluationScore.text(score);
         if (topLine) this.ui.topEngineLine.text(topLine);
-        if (depth && nodes) {
-            this.ui.engineStats.text(`Depth: ${depth} | Nodes: ${nodes}`);
-        }
+        if (depth && nodes) this.ui.engineStats.text(`Depth: ${depth} | Nodes: ${nodes}`);
     }
 
-    /**
-     * Initiates a full-game review to classify each move.
-     */
     async runGameReview() {
         if (this.state.isReviewing) return;
-        this.state.isReviewing = true;
-        this.state.isInfiniteAnalysis = false;
+        this.state.isReviewing = true; this.state.isInfiniteAnalysis = false;
         this.stockfish.postMessage('stop');
         this.ui.runReviewBtn.prop('disabled', true);
         this.ui.infiniteAnalysisToggle.prop('checked', false).prop('disabled', true);
+        this.ui.moveAssessmentDetails.addClass('hidden').attr('aria-hidden', 'true');
         this.state.gameReviewData = [];
 
         const history = this.game.history({ verbose: true });
         const reviewGame = new Chess();
-        let lastEval = 20;
+        let lastEval = [20, 15]; // [Best move score, 2nd best move score]
 
         for (let i = 0; i < history.length; i++) {
             this.ui.runReviewBtn.text(`Reviewing ${i + 1}/${history.length}`);
             const move = history[i];
             const currentFen = reviewGame.fen();
-            
+            const currentPgn = reviewGame.pgn({ max_width: 5, newline_char: ' ' }) + ` ${i > 0 ? '' : ' '}${move.san}`;
+
             try {
-                const evaluation = await this._getStaticEvaluation(currentFen, this.app.config.REVIEW_DEPTH);
-                const loss = (move.color === 'w') ? (lastEval - evaluation) : (evaluation - lastEval);
+                const evaluations = await this._getStaticEvaluation(currentFen, this.app.config.REVIEW_DEPTH, 2);
+                const isCritical = Math.abs(evaluations[0] - evaluations[1]) > 200; // >2 pawn swing if wrong move is made
+                const loss = (move.color === 'w') ? (lastEval[0] - evaluations[0]) : (evaluations[0] - lastEval[0]);
+
                 this.state.gameReviewData.push({
                     move: move.san,
-                    classification: this._classifyMove(loss),
-                    score: evaluation
+                    classification: this._classifyMove(loss, currentPgn, isCritical),
+                    score: evaluations[0],
+                    isCritical: isCritical
                 });
                 reviewGame.move(move.san);
-                lastEval = evaluation;
+                lastEval = evaluations;
             } catch (error) {
                 console.error(error);
                 this.ui.runReviewBtn.text('Review Failed!').addClass('bg-red-600');
                 this.state.isReviewing = false;
                 this.ui.infiniteAnalysisToggle.prop('disabled', false);
-                return; // Abort the review
+                return;
             }
         }
-
         this.state.isReviewing = false;
         this.ui.runReviewBtn.text('Review Complete');
         this.ui.infiniteAnalysisToggle.prop('disabled', false);
         this._updateMoveListWithReview();
         this._drawEvalChart();
+        this.app.navigateToMove(history.length - 1);
     }
 
-    /**
-     * Gets a static evaluation for a FEN position with a timeout.
-     * @param {string} fen - The FEN to evaluate.
-     * @param {number} depth - The depth for the engine to search.
-     * @returns {Promise<number>} A promise that resolves with the centipawn score.
-     */
-    _getStaticEvaluation(fen, depth) {
+    _getStaticEvaluation(fen, depth, multiPV) {
         return new Promise((resolve, reject) => {
-            let finalScore = 0;
-            let bestMoveReceived = false;
+            let scores = {};
+            const isWhiteTurn = fen.includes(' w ');
 
             const timeoutId = setTimeout(() => {
-                if (!bestMoveReceived) {
-                    cleanup();
-                    reject(new Error(`Stockfish evaluation timed out for FEN: ${fen}`));
-                }
+                cleanup();
+                reject(new Error(`Stockfish evaluation timed out for FEN: ${fen}`));
             }, this.app.config.EVAL_TIMEOUT);
 
             const onMessage = (event) => {
                 const message = event.data;
-                const scoreMatch = message.match(/score cp (-?\d+)/);
-                const mateMatch = message.match(/score mate (-?\d+)/);
-
-                if (mateMatch) {
-                    const mateVal = parseInt(mateMatch[1]);
-                    finalScore = (mateVal > 0 ? this.app.config.MATE_SCORE : -this.app.config.MATE_SCORE);
-                } else if (scoreMatch) {
-                    finalScore = parseInt(scoreMatch[1]);
+                const pvMatch = message.match(/multipv (\d+)/);
+                
+                if (pvMatch) {
+                    const pvIndex = parseInt(pvMatch[1]) - 1;
+                    const scoreMatch = message.match(/score cp (-?\d+)/);
+                    const mateMatch = message.match(/score mate (-?\d+)/);
+                    if (mateMatch) {
+                        const mateVal = parseInt(mateMatch[1]);
+                        scores[pvIndex] = (mateVal > 0 ? this.app.config.MATE_SCORE : -this.app.config.MATE_SCORE);
+                    } else if (scoreMatch) {
+                        scores[pvIndex] = parseInt(scoreMatch[1]);
+                    }
                 }
 
                 if (message.startsWith('bestmove')) {
-                    bestMoveReceived = true;
                     cleanup();
-                    // Score is from current player's perspective, convert to white's perspective
-                    const scoreFromWhite = fen.includes(' w ') ? finalScore : -finalScore;
-                    resolve(scoreFromWhite);
+                    const finalScores = [];
+                    for (let i = 0; i < multiPV; i++) {
+                        const scoreFromPlayer = scores[i] || (Object.values(scores)[0] || 0);
+                        finalScores.push(isWhiteTurn ? scoreFromPlayer : -scoreFromPlayer);
+                    }
+                    resolve(finalScores);
                 }
             };
             
             const cleanup = () => {
                 clearTimeout(timeoutId);
                 this.stockfish.removeEventListener('message', onMessage);
+                this.stockfish.postMessage('setoption name MultiPV value 1'); // Reset to default
             };
 
             this.stockfish.addEventListener('message', onMessage);
+            this.stockfish.postMessage(`setoption name MultiPV value ${multiPV}`);
             this.stockfish.postMessage(`position fen ${fen}`);
             this.stockfish.postMessage(`go depth ${depth}`);
         });
     }
 
-    _classifyMove(loss) {
-        if (loss < 2) return 'Best';
-        if (loss < 10) return 'Excellent';
-        if (loss < 30) return 'Good';
-        if (loss < 80) return 'Inaccuracy';
-        if (loss < 150) return 'Mistake';
-        return 'Blunder';
+    _classifyMove(loss, pgn, isCritical) {
+        if (OPENINGS.some(o => o.pgn.startsWith(pgn.trim()) && pgn.trim().length <= o.pgn.length)) {
+            return 'Theory';
+        }
+        if (isCritical && loss < 10) return 'Brilliant';
+        if (loss > 150) return 'Blunder';
+        if (loss > 80) return 'Mistake';
+        if (loss > 30) return 'Inaccuracy';
+        if (loss > 10) return 'Okay';
+        if (loss > 2) return 'Excellent';
+        return 'Best';
+    }
+
+    _showMoveAssessmentDetails(moveIndex) {
+        if (moveIndex === null || !this.state.gameReviewData[moveIndex]) {
+            this.ui.moveAssessmentDetails.addClass('hidden').attr('aria-hidden', 'true');
+            return;
+        }
+        const { classification, isCritical } = this.state.gameReviewData[moveIndex];
+        const info = CLASSIFICATION_DATA[classification];
+
+        if (info) {
+            let comment = info.comment;
+            if (isCritical && classification !== 'Brilliant') {
+                comment += " This was a critical moment.";
+            }
+            this.ui.assessmentTitle.text(info.title).removeClass().addClass(`text-lg font-bold ${info.color}`);
+            this.ui.assessmentComment.text(comment);
+            this.ui.moveAssessmentDetails.removeClass('hidden').attr('aria-hidden', 'false');
+        } else {
+            this.ui.moveAssessmentDetails.addClass('hidden').attr('aria-hidden', 'true');
+        }
     }
 
     _updateMoveListWithReview() {
-        const classifications = {
-            'Best': { icon: '★', color: 'text-amber-300', title: 'Best Move' },
-            'Excellent': { icon: '✓', color: 'text-sky-400', title: 'Excellent Move' },
-            'Good': { icon: ' ', color: '', title: 'Good Move' },
-            'Inaccuracy': { icon: '?!', color: 'text-yellow-500', title: 'Inaccuracy' },
-            'Mistake': { icon: '?', color: 'text-orange-500', title: 'Mistake' },
-            'Blunder': { icon: '??', color: 'text-red-600', title: 'Blunder' },
-        };
         const history = this.game.history({ verbose: true });
         let html = '';
-        for (let i = 0; i < history.length; i += 2) {
-            html += `<div class="flex items-start gap-2 mb-1">
-                        <span class="font-bold w-6 text-gray-400 pt-1">${Math.floor(i / 2) + 1}.</span>
-                        <div class="flex-1 flex gap-2">`;
-            if (history[i]) {
-                const review = this.state.gameReviewData[i];
-                const info = classifications[review.classification];
-                html += `<div class="analysis-move-item flex-1" data-move-index="${i}" title="${info.title}"><span>${history[i].san}</span><span class="font-bold ml-1 ${info.color}">${info.icon}</span></div>`;
-            } else { html += `<div class="flex-1"></div>`; }
-            if (history[i + 1]) {
-                const review = this.state.gameReviewData[i + 1];
-                const info = classifications[review.classification];
-                html += `<div class="analysis-move-item flex-1" data-move-index="${i + 1}" title="${info.title}"><span>${history[i+1].san}</span><span class="font-bold ml-1 ${info.color}">${info.icon}</span></div>`;
-            } else { html += `<div class="flex-1"></div>`; }
-            html += `</div></div>`;
+        for (let i = 0; i < history.length; i++) {
+            const move = history[i];
+            const moveNum = Math.floor(i / 2) + 1;
+            const review = this.state.gameReviewData[i];
+            const info = CLASSIFICATION_DATA[review.classification];
+            
+            html += `<div class="analysis-move-item flex items-center gap-3 p-2 rounded-md" data-move-index="${i}" title="${info.title}">`;
+            if (move.color === 'w') {
+                html += `<span class="w-8 text-right font-bold text-gray-400">${moveNum}.</span>`;
+            } else {
+                html += `<span class="w-8"></span>`;
+            }
+            html += `<span class="flex-grow">${move.san}</span>`;
+            if(review.isCritical && info.title !== 'Brilliant') html += `<span class="font-bold text-lg text-red-500" title="Critical Position">🔥</span>`;
+            html += `<span class="font-bold text-lg w-6 text-center ${info.color}">${info.icon}</span>
+                     </div>`;
         }
         this.ui.analysisMoveList.html(html);
     }
@@ -305,12 +297,8 @@ class AnalysisController {
         });
 
         this.chart = new Chart(this.ui.evalChart, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Advantage (White)',
-                    data: data.map(cp => cp / 100),
+            type: 'line', data: { labels: labels, datasets: [{
+                    label: 'Advantage (White)', data: data.map(cp => cp / 100),
                     borderColor: 'rgba(255, 255, 255, 0.7)',
                     backgroundColor: (context) => {
                         const { ctx, chartArea, scales } = context.chart;
@@ -327,12 +315,7 @@ class AnalysisController {
             },
             options: {
                 scales: {
-                    y: {
-                        suggestedMin: -5, suggestedMax: 5,
-                        title: { display: true, text: 'Advantage', color: '#9e9c99' },
-                        grid: { color: 'rgba(255,255,255,0.1)' },
-                        ticks: { color: '#9e9c99' }
-                    },
+                    y: { suggestedMin: -5, suggestedMax: 5, title: { display: true, text: 'Advantage', color: '#9e9c99' }, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#9e9c99' } },
                     x: { display: false }
                 },
                 plugins: { legend: { display: false } }
@@ -347,8 +330,8 @@ class AnalysisController {
             const moveNum = (i / 2) + 1;
             html += `<div class="flex items-center gap-2 mb-1">
                         <span class="font-bold w-6 text-gray-400">${moveNum}.</span>
-                        <div class="analysis-move-item flex-1" data-move-index="${i}">${history[i] ? history[i].san : ''}</div>
-                        <div class="analysis-move-item flex-1" data-move-index="${i + 1}">${history[i+1] ? history[i+1].san : ''}</div>
+                        <div class="analysis-move-item flex-1 p-2 rounded-md" data-move-index="${i}">${history[i] ? history[i].san : ''}</div>
+                        <div class="analysis-move-item flex-1 p-2 rounded-md" data-move-index="${i + 1}">${history[i+1] ? history[i+1].san : ''}</div>
                     </div>`;
         }
         this.ui.analysisMoveList.html(html);
