@@ -60,7 +60,7 @@ class AnalysisController {
 
     stop() {
         this.state.isAnalyzing = false;
-        this.stockfish.postMessage('stop');
+        if (this.stockfish) this.stockfish.postMessage('stop');
         if (this.chart) { this.chart.destroy(); this.chart = null; }
     }
     
