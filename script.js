@@ -408,7 +408,7 @@ $(document).ready(function() {
         _makeUserMove(move, isClickMove) {
             const legalMove = this.state.game.moves({ verbose: true }).find(m => m.from === move.from && m.to === move.to);
             if (!legalMove) {
-                if(this.state.isSoundEnabled) this.sounds.illegal.play();
+                if (this.state.isSoundEnabled) this.sounds.illegal.play();
                 return 'snapback';
             }
             if (legalMove.flags.includes('p') && (legalMove.to.endsWith('8') || legalMove.to.endsWith('1'))) {
@@ -623,7 +623,7 @@ $(document).ready(function() {
             this.elements.navNext.prop('disabled', isLivePlay || viewingMoveIndex >= history.length - 1);
             this.elements.navLast.prop('disabled', isLivePlay || viewingMoveIndex >= history.length - 1);
             this.elements.hintButton.prop('disabled', !isLivePlay || game.turn() !== humanPlayer || isHintThinking || isStockfishThinking);
-            this.elements.undoButton.prop('disabled', !isLivePlay || game.history().length < (game.turn() === humanPlayer ? 0 : 1) || isStockfishThinking);
+            this.elements.undoButton.prop('disabled', !isLivePlay || game.history().length < 1 || isStockfishThinking);
             this.elements.status.toggleClass('thinking-animation', isStockfishThinking || isHintThinking);
         }
         
