@@ -5,22 +5,11 @@
 $(document).ready(function() {
     class ChessGame {
         constructor() {
-            if (!window.APP_CONFIG) {
-                console.error("CRITICAL: APP_CONFIG not found. Using fallback default values. Please ensure config.js is loaded correctly.");
-                this.config = {
-                    MATE_SCORE: 10000, LIVE_EVAL_DEPTH: 18, HINT_MOVETIME: 1000,
-                    DEFAULT_BOARD_THEME: 'green', DEFAULT_PIECE_THEME: 'cburnett',
-                    REVIEW_DEPTH: 14, EVAL_TIMEOUT: 15000,
-                    PLAYER_STARTING_ELO: 1200, K_FACTOR: 32,
-                    STOCKFISH_URL: 'https://cdn.jsdelivr.net/gh/niklasf/stockfish.js/stockfish.js'
-                };
-            } else {
-                this.config = window.APP_CONFIG;
-            }
+            this.config = APP_CONFIG; // From config.js
+            this.sounds = sounds;     // From config.js
             this.elements = {};
             this.state = {};
             this.analysisController = null;
-            this.sounds = window.sounds;
             this._initializeApplication();
         }
 
@@ -39,17 +28,16 @@ $(document).ready(function() {
                 })
                 .catch(error => {
                     console.error("CRITICAL: Failed to initialize Stockfish worker.", error);
-                    this.elements.loadingIndicator.find('p').text('Error: Could not load AI engine.');
+                    let errorMessage = error.message || 'Error: Could not load AI engine.';
+                    this.elements.loadingIndicator.find('p').text(errorMessage);
                     this.elements.loadingIndicator.find('svg').remove();
                 });
         }
 
         _initElements() {
             this.elements = {
-                loadingIndicator: $('#loading-indicator'),
-                sidePanel: $('#side-panel'),
-                resizeSidebarBtn: $('#resize-sidebar-btn'),
-                resizeIcon: $('#resize-icon'),
+                loadingIndicator: $('#loading-indicator'), sidePanel: $('#side-panel'),
+                resizeSidebarBtn: $('#resize-sidebar-btn'), resizeIcon: $('#resize-icon'),
                 board: $('#board'), status: $('#game-status'), openingName: $('#opening-name'),
                 themeSelector: $('#theme-selector'), pieceThemeSelector: $('#piece-theme-selector'),
                 capturedByWhite: $('#captured-by-white'), capturedByBlack: $('#captured-by-black'),
@@ -101,15 +89,27 @@ $(document).ready(function() {
 
         _initStockfish() {
             return new Promise((resolve, reject) => {
-                fetch(this.config.STOCKFISH_URL)
-                    .then(response => response.ok ? response.text() : Promise.reject(`Status ${response.status}`))
-                    .then(text => {
-                        const blob = new Blob([text], { type: 'application/javascript' });
-                        this.state.stockfish = new Worker(URL.createObjectURL(blob));
-                        this.state.stockfish.onmessage = this._handleStockfishMessage.bind(this);
-                        resolve();
-                    })
-                    .catch(error => reject(error));
+                try {
+                    if (typeof STOCKFISH_ENGINE_CODE === 'undefined' || !STOCKFISH_ENGINE_CODE.trim()) {
+                        return reject(new Error("Engine code is missing from config.js."));
+                    }
+                    const blob = new Blob([STOCKFISH_ENGINE_CODE], { type: 'application/javascript' });
+                    this.state.stockfish = new Worker(URL.createObjectURL(blob));
+                    this.state.stockfish.onmessage = this._handleStockfishMessage.bind(this);
+                    this.state.stockfish.onerror = (e) => reject(e);
+                    
+                    const readyListener = (event) => {
+                        if (event.data === 'uciok') {
+                            this.state.stockfish.removeEventListener('message', readyListener);
+                            resolve();
+                        }
+                    };
+                    this.state.stockfish.addEventListener('message', readyListener);
+                    this.state.stockfish.postMessage('uci');
+
+                } catch (error) {
+                    reject(error);
+                }
             });
         }
 
@@ -138,7 +138,7 @@ $(document).ready(function() {
             this.elements.pieceThemeSelector.val(localStorage.getItem('chessPieceTheme') || this.config.DEFAULT_PIECE_THEME);
             this._setSoundIcon();
             Howler.mute(!this.state.isSoundEnabled);
-            this._applySidebarSize(true); // Apply initial sidebar size without animation
+            this._applySidebarSize(true);
         }
 
         _bindEvents() {
@@ -192,13 +192,13 @@ $(document).ready(function() {
             this.elements.tabs.forEach(tab => {
                 const isActive = tab.btn.is(activeTab.btn);
                 tab.btn.toggleClass('text-white border-white', isActive).toggleClass('text-gray-400 border-transparent', !isActive);
-                tab.content.toggleClass('hidden', !isActive);
+                tab.content.toggleClass('hidden', !isActive).attr('aria-hidden', !isActive);
             });
             if (activeTab.btn.attr('id') === 'tab-btn-analysis' && this.state.game.game_over() && !this.state.isInAnalysisMode) {
                 this.enterAnalysisMode();
             }
         }
-
+        
         initGame() {
             if (this.state.stockfish) this.state.stockfish.postMessage('stop');
             this._closeAllModals();
@@ -241,8 +241,6 @@ $(document).ready(function() {
             }
         }
         
-        // --- UI Methods (Including new Sidebar logic) ---
-
         _toggleSidebarSize() {
             this.state.isSidebarExpanded = !this.state.isSidebarExpanded;
             localStorage.setItem('sidebarExpanded', this.state.isSidebarExpanded);
@@ -254,10 +252,8 @@ $(document).ready(function() {
             const normalWidth = 'lg:w-[400px]';
             const expandIcon = 'icon/arrows-pointing-out.png';
             const collapseIcon = 'icon/arrows-pointing-in.png';
-
             const sidePanel = this.elements.sidePanel;
             if (instant) sidePanel.css('transition', 'none');
-
             if (this.state.isSidebarExpanded) {
                 sidePanel.removeClass(normalWidth).addClass(expandedWidth);
                 this.elements.resizeIcon.attr('src', collapseIcon);
@@ -265,12 +261,9 @@ $(document).ready(function() {
                 sidePanel.removeClass(expandedWidth).addClass(normalWidth);
                 this.elements.resizeIcon.attr('src', expandIcon);
             }
-
             if (instant) {
                 setTimeout(() => sidePanel.css('transition', ''), 50);
             }
-
-            // After animation, tell board and chart to resize
             setTimeout(() => {
                 if(this.state.board) this.state.board.resize();
                 if (this.analysisController && this.analysisController.chart) {
@@ -279,8 +272,6 @@ $(document).ready(function() {
             }, 350);
         }
         
-        // --- All other methods from previous correct versions ---
-        // (Omitted for brevity, logic remains the same)
         endGame() {
             this.state.stockfish.postMessage('stop');
             this.state.gameActive = false;
@@ -310,10 +301,11 @@ $(document).ready(function() {
             this.elements.ratingChange.html(`Rating: ${this.state.playerElo} (<span class="${eloChange >= 0 ? 'text-green-400' : 'text-red-400'}">${sign}${eloChange}</span>)`);
             this.elements.modalTitle.text(title);
             this.elements.modalMessage.text(msg);
-            this.elements.modalContainer.removeClass('hidden');
+            this.elements.modalContainer.removeClass('hidden').attr('aria-hidden', 'false');
             this.elements.gameOverModal.removeClass('hidden');
             gsap.fromTo(this.elements.gameOverModal, { scale: 0.7, opacity: 0, y: -20 }, { scale: 1, opacity: 1, y: 0, duration: 0.5, ease: 'elastic.out(1, 0.8)' });
         }
+        
         undoMove() {
             if (this.elements.undoButton.prop('disabled')) return;
             this.navigateToMove(null);
@@ -322,6 +314,7 @@ $(document).ready(function() {
             if (this.state.isSoundEnabled) this.sounds.moveSelf.play();
             this.updateGameState();
         }
+        
         _buildBoard(position) {
             const config = {
                 position, draggable: true,
@@ -340,6 +333,7 @@ $(document).ready(function() {
             this.state.board.orientation(this.state.humanPlayer === 'w' ? 'white' : 'black');
             this._renderCoordinates();
         }
+        
         _onDragStart(source, piece) {
             if (!this.state.gameActive || this.state.game.game_over() || this.state.isInAnalysisMode || this.state.viewingMoveIndex !== null || !piece.startsWith(this.state.humanPlayer)) {
                 return false;
@@ -351,6 +345,7 @@ $(document).ready(function() {
             }
             return true;
         }
+        
         _onDrop(source, target) {
             this._clearAllHighlights();
             const move = { from: source, to: target };
@@ -363,6 +358,7 @@ $(document).ready(function() {
             }
             return this._makeUserMove(move, false);
         }
+        
         _handleSquareMouseup(e) {
             this._clearHintHighlights();
             const clickedSquare = $(e.currentTarget).data('square');
@@ -370,6 +366,7 @@ $(document).ready(function() {
             else if (this.state.isStockfishThinking) this._handleClickWhileAIThinking(clickedSquare);
             else this._handleClickLive(clickedSquare);
         }
+        
         _handleClickInAnalysis(square) {
             this._clearClickHighlights();
             const piece = this.state.reviewGame.get(square);
@@ -378,6 +375,7 @@ $(document).ready(function() {
                 this._highlightLegalMoves(square, this.state.reviewGame);
             }
         }
+        
         _handleClickWhileAIThinking(square) {
             const source = this.state.selectedSquare;
             if (source && source !== square) {
@@ -392,6 +390,7 @@ $(document).ready(function() {
                 }
             }
         }
+        
         _handleClickLive(square) {
             const source = this.state.selectedSquare;
             if (source && source !== square) {
@@ -405,9 +404,13 @@ $(document).ready(function() {
                 }
             }
         }
+        
         _makeUserMove(move, isClickMove) {
             const legalMove = this.state.game.moves({ verbose: true }).find(m => m.from === move.from && m.to === move.to);
-            if (!legalMove) return 'snapback';
+            if (!legalMove) {
+                if(this.state.isSoundEnabled) this.sounds.illegal.play();
+                return 'snapback';
+            }
             if (legalMove.flags.includes('p') && (legalMove.to.endsWith('8') || legalMove.to.endsWith('1'))) {
                 this.state.pendingMove = move;
                 this._showPromotionDialog(this.state.humanPlayer);
@@ -418,6 +421,7 @@ $(document).ready(function() {
             }
             this._clearClickHighlights();
         }
+        
         _handlePromotionChoice(e) {
             const promotionPiece = $(e.currentTarget).data('piece');
             if (this.state.pendingMove) {
@@ -435,6 +439,7 @@ $(document).ready(function() {
                 this._closeAllModals();
             }
         }
+        
         makeAiMove() {
             if (!this.state.gameActive || this.state.game.game_over()) return;
             this.state.isStockfishThinking = true;
@@ -460,38 +465,42 @@ $(document).ready(function() {
             this.state.stockfish.postMessage(`position fen ${fen}`);
             this.state.stockfish.postMessage(settings.depth ? `go depth ${settings.depth}` : `go movetime ${settings.movetime}`);
         }
+        
         _performAiMove(move) {
             this._clearAllHighlights();
             const moveObject = this.state.game.move(move, { sloppy: true });
             if (!moveObject) {
-                console.error("AI Error: Illegal move attempted:", move, "FEN:", this.state.game.fen());
-                this.state.isStockfishThinking = false; this.updateGameState(true); return;
+                 this.state.isStockfishThinking = false; this.updateGameState(true); return;
             }
-            this.state.board.move(`${moveObject.from}-${moveObject.to}`);
+            this.state.board.position(this.state.game.fen());
             this.state.isStockfishThinking = false;
-            this._playMoveSound(moveObject);
+            this._playMoveSound(moveObject, true);
             this.updateGameState(false);
-            if (this.state.isSoundEnabled) this.sounds.notify.play();
             if (this.state.pendingPremove && this.state.gameActive) setTimeout(() => this._executePremove(), 50);
         }
+        
         _setPremove(move) {
+            if (this.state.isSoundEnabled) this.sounds.premove.play();
             this.state.pendingPremove = move;
             this._removePremoveHighlight();
             this.elements.board.find(`[data-square="${move.from}"], [data-square="${move.to}"]`).addClass('premove-highlight');
         }
+        
         _executePremove() {
             const move = this.state.pendingPremove;
             this.state.pendingPremove = null;
             this._removePremoveHighlight();
             this._makeUserMove(move, true);
         }
+        
         _requestLiveEvaluation() {
-            if (this.state.isStockfishThinking || this.state.isHintThinking || this.state.game.game_over()) return;
+            if (!this.state.stockfish || this.state.isStockfishThinking || this.state.isHintThinking || this.state.game.game_over()) return;
             const fen = this.state.game.fen();
             if (!this._isValidFen(fen)) return;
             this.state.stockfish.postMessage(`position fen ${fen}`);
             this.state.stockfish.postMessage(`go depth ${this.config.LIVE_EVAL_DEPTH}`);
         }
+        
         requestHint() {
             if (this.elements.hintButton.prop('disabled')) return;
             this._clearAllHighlights();
@@ -504,9 +513,11 @@ $(document).ready(function() {
             this.state.stockfish.postMessage(`position fen ${fen}`);
             this.state.stockfish.postMessage(`go movetime ${this.config.HINT_MOVETIME}`);
         }
+        
         _handleStockfishMessage(event) {
+            if (event.data === 'uciok') return;
+            if (this.state.isInAnalysisMode) { this.analysisController.handleEngineMessage(event.data); return; }
             const message = event.data;
-            if (this.state.isInAnalysisMode) { this.analysisController.handleEngineMessage(message); return; }
             if (message.startsWith('info')) {
                 const scoreMatch = message.match(/score cp (-?\d+)/);
                 const mateMatch = message.match(/score mate (-?\d+)/);
@@ -528,6 +539,7 @@ $(document).ready(function() {
                 }
             }
         }
+        
         enterAnalysisMode() {
             if (this.state.isInAnalysisMode) return;
             this.state.isInAnalysisMode = true;
@@ -540,15 +552,18 @@ $(document).ready(function() {
             this.navigateToMove(this.state.reviewGame.history().length - 1);
             this._closeAllModals();
         }
+        
         _enterPlayMode() {
             this.state.isInAnalysisMode = false;
-            this.elements.gameplayControls.removeClass('hidden');
-            this.elements.analysisModeControls.addClass('hidden');
+            this.elements.gameplayControls.removeClass('hidden').attr('aria-hidden', 'false');
+            this.elements.analysisModeControls.addClass('hidden').attr('aria-hidden', 'true');
         }
+        
         _enterAnalysisModeUI() {
-            this.elements.gameplayControls.addClass('hidden');
-            this.elements.analysisModeControls.removeClass('hidden');
+            this.elements.gameplayControls.addClass('hidden').attr('aria-hidden', 'true');
+            this.elements.analysisModeControls.removeClass('hidden').attr('aria-hidden', 'false');
         }
+        
         navigateToMove(index) {
             const sourceGame = this.state.isInAnalysisMode ? this.state.reviewGame : this.state.game;
             const history = sourceGame.history({ verbose: true });
@@ -568,23 +583,22 @@ $(document).ready(function() {
                 this.analysisController.onPositionChanged(targetFen, this.state.viewingMoveIndex);
             }
         }
+        
         _navigatePrevious() {
             const history = (this.state.isInAnalysisMode ? this.state.reviewGame : this.state.game).history();
             let currentIndex = this.state.viewingMoveIndex;
             if (currentIndex === null) currentIndex = history.length;
             this.navigateToMove(currentIndex - 1);
         }
+        
         _navigateNext() {
             if (this.state.viewingMoveIndex === null && !this.state.isInAnalysisMode) return;
             const targetIndex = (this.state.viewingMoveIndex === null ? -1 : this.state.viewingMoveIndex) + 1;
             this.navigateToMove(targetIndex);
         }
-        _isValidFen(fen) {
-            const validation = this.state.game.validate_fen(fen);
-            if (validation.valid) return true;
-            console.error("Invalid FEN generated:", validation.error, fen);
-            return false;
-        }
+        
+        _isValidFen(fen) { return this.state.game.validate_fen(fen).valid; }
+        
         _updateStatus() {
             const { game, viewingMoveIndex, isInAnalysisMode, isStockfishThinking, isHintThinking, humanPlayer } = this.state;
             const history = (isInAnalysisMode ? this.state.reviewGame : game).history();
@@ -612,6 +626,7 @@ $(document).ready(function() {
             this.elements.undoButton.prop('disabled', !isLivePlay || game.history().length < (game.turn() === humanPlayer ? 0 : 1) || isStockfishThinking);
             this.elements.status.toggleClass('thinking-animation', isStockfishThinking || isHintThinking);
         }
+        
         _updateCapturedPieces() {
             const sourceGame = this.state.isInAnalysisMode ? this.state.reviewGame : this.state.game;
             const pieceThemePath = PIECE_THEMES[this.elements.pieceThemeSelector.val()] || PIECE_THEMES.cburnett;
@@ -638,6 +653,7 @@ $(document).ready(function() {
             this.elements.whiteAdvantage.text(adv > 0 ? `+${adv}` : '');
             this.elements.blackAdvantage.text(adv < 0 ? `+${-adv}` : '');
         }
+        
         _updateMoveHistoryDisplay() {
             const sourceGame = this.state.isInAnalysisMode ? this.state.reviewGame : this.state.game;
             const history = sourceGame.history({ verbose: true });
@@ -658,11 +674,13 @@ $(document).ready(function() {
                 this.elements.moveHistoryLog.scrollTop(this.elements.moveHistoryLog[0].scrollHeight);
             }
         }
+        
         _updateOpeningDisplay() {
             const pgn = (this.state.isInAnalysisMode ? this.state.reviewGame : this.state.game).pgn({ max_width: 5, newline_char: ' ' });
             const foundOpening = OPENINGS.find(o => pgn.startsWith(o.pgn))?.name || '';
             this.elements.openingName.text(foundOpening).prop('title', foundOpening);
         }
+        
         _updatePlayerLabels() {
             const { humanPlayer, playerName } = this.state;
             this.elements.playerColorIndicator.text(`You are playing as ${humanPlayer === 'w' ? 'White' : 'Black'}`);
@@ -670,12 +688,14 @@ $(document).ready(function() {
             this.elements.topPlayerName.text(humanPlayer === 'b' ? `${playerName} (Black)` : `AI (Black)`);
             this.elements.playerName.text(playerName);
         }
+        
         _updateEvalBar(score) {
             const percentage = ((Math.atan(score / 350) / Math.PI) + 0.5) * 100;
             const clamped = Math.max(0.5, Math.min(99.5, percentage));
             gsap.to(this.elements.evalBarWhite, { height: `${clamped}%`, duration: 0.7, ease: 'power2.out' });
             gsap.to(this.elements.evalBarBlack, { height: `${100 - clamped}%`, duration: 0.7, ease: 'power2.out' });
         }
+        
         _renderCoordinates() {
             const isFlipped = this.state.board.orientation() === 'black';
             const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -686,13 +706,16 @@ $(document).ready(function() {
             $('#left-ranks').html(ranks.slice().reverse().map(r => `<span>${r}</span>`).join(''));
             $('#right-ranks').html(ranks.slice().reverse().map(r => `<span>${r}</span>`).join(''));
         }
-        _playMoveSound(move) {
-            if (!this.state.isSoundEnabled || !move || move.san.includes('#') || move.promotion) return;
-            if (move.san.includes('+')) this.sounds.check.play();
-            else if (move.flags.includes('k') || move.flags.includes('q')) this.sounds.castle.play();
-            else if (move.flags.includes('c') || move.flags.includes('e')) this.sounds.capture.play();
-            else this.sounds.moveSelf.play();
+        
+        _playMoveSound(move, isOpponent = false) {
+            if (!this.state.isSoundEnabled || !move) return;
+            if (move.san.includes('#') || move.promotion) return;
+            if (move.san.includes('+')) { this.sounds.check.play(); }
+            else if (move.flags.includes('k') || move.flags.includes('q')) { this.sounds.castle.play(); }
+            else if (move.flags.includes('c') || move.flags.includes('e')) { this.sounds.capture.play(); }
+            else { isOpponent ? this.sounds.moveOpponent.play() : this.sounds.moveSelf.play(); }
         }
+        
         _highlightLegalMoves(square, sourceGame = this.state.game) {
             this._clearClickHighlights();
             const moves = sourceGame.moves({ square: square, verbose: true });
@@ -700,12 +723,19 @@ $(document).ready(function() {
             this.elements.board.find(`[data-square="${square}"]`).addClass('highlight-selected');
             moves.forEach(move => this.elements.board.find(`[data-square="${move.to}"]`).addClass('highlight-legal'));
         }
+        
         _highlightHint(from, to) { this.elements.board.find(`[data-square="${from}"], [data-square="${to}"]`).addClass('highlight-hint'); }
         _clearAllHighlights() { this._clearClickHighlights(); this._clearHintHighlights(); }
         _clearClickHighlights() { this.elements.board.find('[data-square]').removeClass('highlight-selected highlight-legal'); this.state.selectedSquare = null; }
         _clearHintHighlights() { this.elements.board.find('[data-square]').removeClass('highlight-hint'); }
         _removePremoveHighlight() { this.elements.board.find('.premove-highlight').removeClass('premove-highlight'); }
-        _closeAllModals() { this.elements.modalContainer.addClass('hidden'); this.elements.gameOverModal.addClass('hidden'); this.elements.promotionModal.addClass('hidden'); }
+        
+        _closeAllModals() {
+            this.elements.modalContainer.addClass('hidden').attr('aria-hidden', 'true');
+            this.elements.gameOverModal.addClass('hidden');
+            this.elements.promotionModal.addClass('hidden');
+        }
+        
         _showPromotionDialog(color) {
             const pieceThemePath = PIECE_THEMES[this.elements.pieceThemeSelector.val()] || PIECE_THEMES.cburnett;
             this.elements.promotionChoices.empty();
@@ -713,17 +743,21 @@ $(document).ready(function() {
                 const img = $('<img>').attr('src', pieceThemePath.replace('{piece}', `${color}${p.toUpperCase()}`)).addClass('cursor-pointer hover:bg-stone-600 rounded-md w-16 h-16').data('piece', p);
                 this.elements.promotionChoices.append(img);
             });
-            this.elements.modalContainer.removeClass('hidden');
+            this.elements.modalContainer.removeClass('hidden').attr('aria-hidden', 'false');
             this.elements.promotionModal.removeClass('hidden');
         }
+        
         _calculateEloChange(player, opp, res) { return Math.round(this.config.K_FACTOR * (res - (1 / (1 + Math.pow(10, (opp - player) / 400))))); }
+        
         _handleDifficultyChange(e) {
             const level = $(e.currentTarget).val();
             this.state.aiDifficulty = level;
             this._setAiElo(level);
             localStorage.setItem('aiDifficulty', level);
         }
+        
         _setAiElo(level) { this.elements.eloDisplay.text(DIFFICULTY_SETTINGS[level]?.elo || 'N/A'); }
+        
         _applyTheme() {
             const theme = THEMES.find(t => t.name === this.elements.themeSelector.val());
             if (theme) {
@@ -732,18 +766,22 @@ $(document).ready(function() {
                 localStorage.setItem('chessBoardTheme', theme.name);
             }
         }
+        
         _applyPieceTheme() {
             localStorage.setItem('chessPieceTheme', this.elements.pieceThemeSelector.val());
             const currentFen = this.state.isInAnalysisMode ? this.state.reviewGame.fen() : this.state.game.fen();
             this._buildBoard(currentFen);
         }
+        
         _toggleSound() {
             this.state.isSoundEnabled = !this.state.isSoundEnabled;
             Howler.mute(!this.state.isSoundEnabled);
             this._setSoundIcon();
             localStorage.setItem('chessSoundEnabled', this.state.isSoundEnabled);
         }
+        
         _setSoundIcon() { this.elements.soundIcon.attr('src', this.state.isSoundEnabled ? 'icon/speaker-wave.png' : 'icon/speaker-x-mark.png'); }
+        
         _editPlayerName() {
             Swal.fire({
                 title: 'Enter your name', input: 'text', inputValue: this.state.playerName, showCancelButton: true,
