@@ -14,7 +14,7 @@
     <style>
         :root { --light-square-color: #eaefd2; --dark-square-color: #769656; }
         body { font-family: 'Inter', sans-serif; background-color: #372d24; }
-        #board { box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 8px solid #5d4037; }
+        .board-container { box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 8px solid #5d4037; }
         .white-1e1d7 { background-color: var(--light-square-color) !important; }
         .black-3c85d { background-color: var(--dark-square-color) !important; }
         .premove-highlight { box-shadow: inset 0 0 3px 3px rgba(255, 170, 0, 0.75); }
@@ -22,117 +22,136 @@
         .move-history-log { height: 180px; overflow-y:auto; background-color:rgba(0,0,0,0.2); border-radius:0.375rem; font-family:monospace; font-size:1rem; line-height:1.75rem; }
         .thinking-animation { animation:pulse 1.5s ease-in-out infinite; } @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
         .board-wrapper { display: grid; grid-template-columns: 24px 1fr 24px; grid-template-rows: 24px 1fr 24px; justify-items: center; align-items: center; gap: 4px; }
-        #board { grid-column: 2; grid-row: 2; }
+        .board { grid-column: 2; grid-row: 2; }
         .coordinates { color: #c7bca1; font-weight: 600; font-size: 0.9rem; pointer-events: none; user-select: none; }
         .files { display: flex; justify-content: space-around; width: 100%; }
         .ranks { display: flex; flex-direction: column; justify-content: space-around; height: 100%; }
-        #top-files { grid-column: 2; grid-row: 1; }
-        #bottom-files { grid-column: 2; grid-row: 3; }
-        #left-ranks { grid-column: 1; grid-row: 2; }
-        #right-ranks { grid-column: 3; grid-row: 2; }
+        #top-files, #analysis-top-files { grid-column: 2; grid-row: 1; }
+        #bottom-files, #analysis-bottom-files { grid-column: 2; grid-row: 3; }
+        #left-ranks, #analysis-left-ranks { grid-column: 1; grid-row: 2; }
+        #right-ranks, #analysis-right-ranks { grid-column: 3; grid-row: 2; }
         
         /* --- Button and History Styles --- */
-        .control-btn, .history-nav-btn {
-            background-color: rgba(255,255,255,0.15);
-            border-radius: 50%;
-            padding: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background-color 0.2s;
-        }
-        .control-btn:hover, .history-nav-btn:hover {
-            background-color: rgba(255,255,255,0.25);
-        }
-        .control-btn:disabled, .history-nav-btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            background-color: rgba(255,255,255,0.1);
-        }
+        .control-btn, .history-nav-btn { background-color: rgba(255,255,255,0.15); border-radius: 50%; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+        .control-btn:hover, .history-nav-btn:hover { background-color: rgba(255,255,255,0.25); }
+        .control-btn:disabled, .history-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; background-color: rgba(255,255,255,0.1); }
         .control-btn img { width: 24px; height: 24px; }
         .history-nav-btn img { width: 20px; height: 20px; }
         .move-span { padding: 2px 4px; }
         .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; border-radius: 3px; }
         .highlight-move { background-color: rgba(255, 193, 7, 0.3); border-radius: 3px; }
+        #analysis-move-list { height: 350px; overflow-y: auto; }
+        .analysis-move-item:hover { background-color: rgba(255,255,255,0.1); cursor: pointer; }
+        .current-move-analysis { background-color: rgba(255, 193, 7, 0.3); }
     </style>
 </head>
-<body class="flex flex-col items-center justify-center min-h-screen p-4">
-    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8">
-        <div class="w-full lg:flex-1 flex justify-center items-stretch gap-3">
-            <div class="flex items-center">
-                <div id="eval-bar-container" class="w-5 h-full bg-stone-900/50 rounded-full overflow-hidden flex flex-col">
-                    <div id="eval-bar-black" class="w-full bg-stone-800 transition-all duration-500" style="height:50%;"></div>
-                    <div id="eval-bar-white" class="w-full bg-stone-200 transition-all duration-500" style="height:50%;"></div>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-screen-xl mx-auto">
+
+        <div id="game-room" class="flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8">
+            <div class="w-full lg:flex-1 flex justify-center items-stretch gap-3">
+                <div class="flex items-center">
+                    <div id="eval-bar-container" class="w-5 h-full bg-stone-900/50 rounded-full overflow-hidden flex flex-col">
+                        <div id="eval-bar-black" class="w-full bg-stone-800 transition-all duration-500" style="height:50%;"></div>
+                        <div id="eval-bar-white" class="w-full bg-stone-200 transition-all duration-500" style="height:50%;"></div>
+                    </div>
                 </div>
+                <main class="w-full max-w-[720px] flex flex-col gap-2 text-white">
+                    <div>
+                        <div class="flex justify-between items-center mb-1 font-bold text-lg">
+                            <span id="top-player-name">AI (Black)</span>
+                            <span id="black-advantage" class="text-green-400"></span>
+                        </div>
+                        <div id="captured-by-black" class="flex flex-wrap items-center min-h-[36px] bg-stone-900/50 p-1 rounded-md"></div>
+                    </div>
+                    <div class="board-wrapper">
+                        <div id="top-files" class="coordinates files"></div><div id="left-ranks" class="coordinates ranks"></div>
+                        <div id="game-board" class="board board-container w-full"></div>
+                        <div id="right-ranks" class="coordinates ranks"></div><div id="bottom-files" class="coordinates files"></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between items-center mt-1 font-bold text-lg">
+                            <span id="bottom-player-name">Player (White)</span>
+                            <span id="white-advantage" class="text-green-400"></span>
+                        </div>
+                        <div id="captured-by-white" class="flex flex-wrap items-center min-h-[36px] bg-stone-900/50 p-1 rounded-md"></div>
+                    </div>
+                </main>
             </div>
+            <aside class="w-full lg:w-96 text-white p-6 rounded-lg bg-black bg-opacity-20 flex flex-col gap-6">
+                <div class="text-center">
+                    <h1 id="player-name" class="text-4xl font-bold cursor-pointer hover:text-amber-300 transition-colors" title="Click to edit name">Player</h1>
+                    <div id="game-status" class="text-xl font-semibold h-8 mt-2">White's Turn</div>
+                    <div id="opening-name" class="text-sm text-stone-400 h-6 mt-1"></div>
+                </div>
+                <div class="border-t border-stone-700 pt-4">
+                    <label for="difficulty-slider" class="font-bold text-lg mb-2 text-center block">AI ELO: <span id="elo-display">1200</span></label>
+                    <input type="range" id="difficulty-slider" min="1" max="12" value="5" step="1" class="w-full"/>
+                </div>
+                <div class="border-t border-stone-700 pt-4 flex flex-col gap-4">
+                    <div>
+                        <label for="theme-selector" class="font-bold text-lg mb-2 block">Board Theme</label>
+                        <select id="theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-500 border"></select>
+                    </div>
+                    <div>
+                        <label for="piece-theme-selector" class="font-bold text-lg mb-2 block">Piece Theme</label>
+                        <select id="piece-theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-500 border"></select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="restart-button" class="w-full px-4 py-3 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors text-lg">New Game</button>
+                    <button id="swap-sides-button" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors text-lg">Swap Sides</button>
+                </div>
+                <div id="player-color-indicator" class="text-center text-stone-300 font-semibold">You are playing as White</div>
+                <div class="border-t border-stone-700 pt-4 flex flex-col gap-2">
+                    <div class="flex justify-between items-center">
+                        <h3 class="font-bold text-lg">Move History</h3>
+                        <div class="flex items-center gap-2">
+                            <button id="sound-toggle" class="control-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button>
+                            <button id="undo-button" class="control-btn" title="Undo Last Move"><img src="icon/arrow-uturn-left.png" alt="Undo"></button>
+                        </div>
+                    </div>
+                    <div id="history-controls" class="flex justify-center items-center gap-4 py-1">
+                        <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
+                        <button id="history-prev" class="history-nav-btn" title="Previous Move"><img src="icon/chevron-left.png" alt="Previous"></button>
+                        <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
+                        <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
+                    </div>
+                    <div id="move-history-log" class="move-history-log p-2"></div>
+                </div>
+            </aside>
+        </div>
+
+        <div id="analysis-room" class="hidden flex-col lg:flex-row items-center lg:items-start justify-center gap-8">
             <main class="w-full max-w-[720px] flex flex-col gap-2 text-white">
-                <div>
-                    <div class="flex justify-between items-center mb-1 font-bold text-lg">
-                        <span id="top-player-name">AI (Black)</span>
-                        <span id="black-advantage" class="text-green-400"></span>
-                    </div>
-                    <div id="captured-by-black" class="flex flex-wrap items-center min-h-[36px] bg-stone-900/50 p-1 rounded-md"></div>
-                </div>
                 <div class="board-wrapper">
-                    <div id="top-files" class="coordinates files"></div><div id="left-ranks" class="coordinates ranks"></div>
-                    <div id="board" class="w-full"></div>
-                    <div id="right-ranks" class="coordinates ranks"></div><div id="bottom-files" class="coordinates files"></div>
+                    <div id="analysis-top-files" class="coordinates files"></div><div id="analysis-left-ranks" class="coordinates ranks"></div>
+                    <div id="analysis-board" class="board board-container w-full"></div>
+                    <div id="analysis-right-ranks" class="coordinates ranks"></div><div id="analysis-bottom-files" class="coordinates files"></div>
                 </div>
                 <div>
-                    <div class="flex justify-between items-center mt-1 font-bold text-lg">
-                        <span id="bottom-player-name">Player (White)</span>
-                        <span id="white-advantage" class="text-green-400"></span>
-                    </div>
-                    <div id="captured-by-white" class="flex flex-wrap items-center min-h-[36px] bg-stone-900/50 p-1 rounded-md"></div>
+                    <canvas id="eval-chart" class="bg-black bg-opacity-20 rounded-lg p-2 mt-4"></canvas>
                 </div>
             </main>
+            <aside class="w-full lg:w-96 text-white p-6 rounded-lg bg-black bg-opacity-20 flex flex-col gap-4">
+                <div class="text-center">
+                    <h1 class="text-4xl font-bold">Game Analysis</h1>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors text-lg">Analyze Game</button>
+                    <button id="return-to-game-btn" class="w-full px-4 py-3 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors text-lg">Play New Game</button>
+                </div>
+                <div id="move-assessment-details" class="hidden p-3 rounded-lg bg-stone-900/50">
+                    <h3 id="assessment-title" class="text-lg font-bold">Best Move</h3>
+                    <p id="assessment-comment" class="text-stone-300"></p>
+                </div>
+                <div class="border-t border-stone-700 pt-4">
+                    <h3 class="font-bold text-lg mb-2">Move List</h3>
+                    <div id="analysis-move-list" class="bg-black bg-opacity-20 rounded-lg p-2"></div>
+                </div>
+            </aside>
         </div>
-        <aside class="w-full lg:w-96 text-white p-6 rounded-lg bg-black bg-opacity-20 flex flex-col gap-6">
-            <div class="text-center">
-                <h1 id="player-name" class="text-4xl font-bold cursor-pointer hover:text-amber-300 transition-colors" title="Click to edit name">Player</h1>
-                <div id="game-status" class="text-xl font-semibold h-8 mt-2">White's Turn</div>
-                <div id="opening-name" class="text-sm text-stone-400 h-6 mt-1"></div>
-            </div>
-            <div class="border-t border-stone-700 pt-4">
-                <label for="difficulty-slider" class="font-bold text-lg mb-2 text-center block">AI ELO: <span id="elo-display">1200</span></label>
-                <input type="range" id="difficulty-slider" min="1" max="12" value="5" step="1" class="w-full"/>
-            </div>
-            <div class="border-t border-stone-700 pt-4 flex flex-col gap-4">
-                <div>
-                    <label for="theme-selector" class="font-bold text-lg mb-2 block">Board Theme</label>
-                    <select id="theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-500 border"></select>
-                </div>
-                <div>
-                    <label for="piece-theme-selector" class="font-bold text-lg mb-2 block">Piece Theme</label>
-                    <select id="piece-theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-500 border"></select>
-                </div>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
-                <button id="restart-button" class="w-full px-4 py-3 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors text-lg">New Game</button>
-                <button id="swap-sides-button" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors text-lg">Swap Sides</button>
-            </div>
-            <div id="player-color-indicator" class="text-center text-stone-300 font-semibold">You are playing as White</div>
-            <div class="border-t border-stone-700 pt-4 flex flex-col gap-2">
-                <div class="flex justify-between items-center">
-                    <h3 class="font-bold text-lg">Move History</h3>
-                    <div class="flex items-center gap-2">
-                        <button id="sound-toggle" class="control-btn" title="Toggle Sound">
-                            <img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On">
-                        </button>
-                        <button id="undo-button" class="control-btn" title="Undo Last Move">
-                            <img src="icon/arrow-uturn-left.png" alt="Undo">
-                        </button>
-                    </div>
-                </div>
-                <div id="history-controls" class="flex justify-center items-center gap-4 py-1">
-                    <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
-                    <button id="history-prev" class="history-nav-btn" title="Previous Move"><img src="icon/chevron-left.png" alt="Previous"></button>
-                    <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
-                    <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
-                </div>
-                <div id="move-history-log" class="move-history-log p-2"></div>
-            </div>
-        </aside>
     </div>
     
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -144,7 +163,6 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <script src="config.js"></script>
-
     <script src="script.js"></script>
 </body>
 </html>
