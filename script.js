@@ -53,7 +53,19 @@ $(document).ready(function() {
     let reviewMoveIndex = null;
     let isLiveAnalysis = false;
 
-    // --- UI Functions ---
+    // --- Layout and UI Functions ---
+    function syncSidebarHeight() {
+        const boardArea = $('#board-area-container');
+        const sidebar = $('aside');
+        if (boardArea.length && sidebar.length && window.innerWidth >= 1024) {
+            requestAnimationFrame(() => {
+                sidebar.css('height', boardArea.outerHeight());
+            });
+        } else if (sidebar.length) {
+            sidebar.css('height', 'auto');
+        }
+    }
+
     function showTab(tabId) {
         $('.tab-content').removeClass('active');
         $('.tab-button').removeClass('active');
@@ -72,24 +84,13 @@ $(document).ready(function() {
         if (isMuted) return;
         if (sounds[soundName]) sounds[soundName].play();
     }
-    
+
     function playMoveSound(move) {
         if (move.flags.includes('p')) playSound('promote');
         else if (move.flags.includes('k') || move.flags.includes('q')) playSound('castle');
         else if (move.flags.includes('c')) playSound('capture');
         else playSound('moveSelf');
         if (game.in_check()) playSound('check');
-    }
-
-    function toggleSound() {
-        isMuted = !isMuted;
-        localStorage.setItem('chessSoundMuted', isMuted);
-        updateSoundIcon();
-    }
-
-    function updateSoundIcon() {
-        soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png');
-        soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off');
     }
 
     // --- Core Game Functions ---
@@ -103,6 +104,7 @@ $(document).ready(function() {
         board = Chessboard('board', config);
         board.orientation(humanPlayer === 'w' ? 'white' : 'black');
         renderCoordinates();
+        syncSidebarHeight();
     }
 
     function initGame() {
@@ -290,27 +292,12 @@ $(document).ready(function() {
         gsap.to(evalBarWhite, { height: `${clamped}%`, duration: 0.7, ease: 'power2.out' });
         gsap.to(evalBarBlack, { height: `${100 - clamped}%`, duration: 0.7, ease: 'power2.out' });
     }
-    
-    function applyTheme() {
-        localStorage.setItem('chessBoardTheme', themeSelector.val());
-        buildBoard(game.fen());
-    }
-
-    function applyPieceTheme() {
-        localStorage.setItem('chessPieceTheme', pieceThemeSelector.val());
-        buildBoard(game.fen());
-    }
 
     function renderCoordinates() { const isFlipped = humanPlayer === 'b'; const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']; let ranks = ['1', '2', '3', '4', '5', '6', '7', '8']; if (isFlipped) { files.reverse(); ranks.reverse(); } const topFilesHtml = files.map(f => `<span>${f}</span>`).join(''); const bottomFilesHtml = files.map(f => `<span>${f}</span>`).join(''); const ranksHtml = ranks.slice().reverse().map(r => `<span>${r}</span>`).join(''); topFiles.html(topFilesHtml); bottomFiles.html(bottomFilesHtml); leftRanks.html(ranksHtml); rightRanks.html(ranksHtml); }
-    function updatePlayerLabels() { playerColorIndicator.text(`You are playing as ${humanPlayer === 'w' ? 'White' : 'Black'}`); bottomPlayerNameElement.text(humanPlayer === 'w' ? `${playerName} (White)` : `AI (White)`); topPlayerNameElement.text(humanPlayer === 'b' ? `${playerName} (Black)` : `AI (Black)`); }
     
-    function undoMove() {
-        if (!undoButton.prop('disabled')) {
-            exitReviewMode();
-            game.undo();
-            game.undo();
-            updateGameState(true);
-        }
+    function updatePlayerLabels() {
+        bottomPlayerNameElement.text(humanPlayer === 'w' ? `${playerName} (White)` : `AI (White)`);
+        topPlayerNameElement.text(humanPlayer === 'b' ? `${playerName} (Black)` : `AI (Black)`);
     }
     
     function updateStatus() {
@@ -326,38 +313,30 @@ $(document).ready(function() {
         undoButton.prop('disabled', !isPlayerTurn || game.history().length < 2);
     }
     
-    // **FIXED**: Rewrote this function for clarity and correctness.
     function updateCapturedPieces() {
         const pieceThemePath = PIECE_THEMES[pieceThemeSelector.val()];
         if (!pieceThemePath) return;
-
         const piecesCapturedByWhite = [];
         const piecesCapturedByBlack = [];
-
         game.history({ verbose: true }).forEach(move => {
             if (move.captured) {
-                if (move.color === 'w') { // White made the move, so a black piece was captured
+                if (move.color === 'w') {
                     piecesCapturedByWhite.push({ type: move.captured, color: 'b' });
-                } else { // Black made the move, so a white piece was captured
+                } else {
                     piecesCapturedByBlack.push({ type: move.captured, color: 'w' });
                 }
             }
         });
-        
         const pieceOrder = { p: 1, n: 2, b: 3, r: 4, q: 5 };
         piecesCapturedByWhite.sort((a,b) => pieceOrder[a.type] - pieceOrder[b.type]);
         piecesCapturedByBlack.sort((a,b) => pieceOrder[a.type] - pieceOrder[b.type]);
-
         const whiteCapturedHtml = piecesCapturedByWhite.map(p => `<img src="${pieceThemePath.replace('{piece}', p.color + p.type.toUpperCase())}" class="captured-piece" />`).join('');
         const blackCapturedHtml = piecesCapturedByBlack.map(p => `<img src="${pieceThemePath.replace('{piece}', p.color + p.type.toUpperCase())}" class="captured-piece" />`).join('');
-        
-        capturedByWhiteElement.html(whiteCapturedHtml); // White's capture pile shows black pieces
-        capturedByBlackElement.html(blackCapturedHtml); // Black's capture pile shows white pieces
-
+        capturedByWhiteElement.html(whiteCapturedHtml);
+        capturedByBlackElement.html(blackCapturedHtml);
         const whiteMatAdv = piecesCapturedByWhite.reduce((acc, p) => acc + (MATERIAL_POINTS[p.type] || 0), 0);
         const blackMatAdv = piecesCapturedByBlack.reduce((acc, p) => acc + (MATERIAL_POINTS[p.type] || 0), 0);
         const adv = whiteMatAdv - blackMatAdv;
-
         whiteAdvantageElement.text(adv > 0 ? `+${adv}` : '');
         blackAdvantageElement.text(adv < 0 ? `+${-adv}` : '');
     }
@@ -386,7 +365,7 @@ $(document).ready(function() {
     function showPromotionDialog(color) {
         const pieceThemePath = PIECE_THEMES[pieceThemeSelector.val()];
         const pieces = ['q', 'r', 'b', 'n'];
-        const promotion_choices_html = pieces.map(p => `<img src="${pieceThemePath.replace('{piece}', `${color}${p.toUpperCase()}`)}" data-piece="${p}" class="promotion-piece" style="cursor: pointer; padding: 5px; border-radius: 5px; width: 60px; height: 60px;" onmouseover="this.style.backgroundColor='#4a5568';" onmouseout="this.style.backgroundColor='transparent';" />`).join('');
+        const promotion_choices_html = pieces.map(p => `<img src="${pieceThemePath.replace('{piece}', `${color}${p.toUpperCase()}`)}" data-piece="${p}" class="promotion-piece" style="cursor: pointer; padding: 5px; width: 60px; height: 60px;" />`).join('');
         Swal.fire({
             title: 'Promote to:', html: `<div style="display: flex; justify-content: space-around;">${promotion_choices_html}</div>`,
             showConfirmButton: false, allowOutsideClick: false, customClass: { popup: '!bg-stone-700', title: '!text-white' },
@@ -403,8 +382,6 @@ $(document).ready(function() {
         });
     }
 
-    function setAiElo(lvl) { eloDisplay.text(DIFFICULTY_SETTINGS[lvl]?.elo || 1200); }
-    
     function endGame() {
         gameActive = false;
         isStockfishThinking = false;
@@ -419,18 +396,58 @@ $(document).ready(function() {
     
     // --- Application Initialization ---
     function initApp() {
-        THEMES.forEach(theme => themeSelector.append($('<option>', { value: theme.name, text: theme.displayName })));
-        Object.keys(PIECE_THEMES).forEach(themeName => pieceThemeSelector.append($('<option>', { value: themeName, text: themeName.charAt(0).toUpperCase() + themeName.slice(1) })));
+        // This function now primarily handles the order of operations
+        
+        // 1. Initialize sounds (no dependencies)
+        initSounds();
 
-        isMuted = localStorage.getItem('chessSoundMuted') === 'true';
-        updateSoundIcon();
-        themeSelector.val(localStorage.getItem('chessBoardTheme') || APP_CONFIG.DEFAULT_BOARD_THEME);
-        pieceThemeSelector.val(localStorage.getItem('chessPieceTheme') || APP_CONFIG.DEFAULT_PIECE_THEME);
-        playerName = localStorage.getItem('chessPlayerName') || 'Player';
-        aiDifficulty = parseInt(localStorage.getItem('chessDifficulty') || '5', 10);
-        difficultySlider.val(aiDifficulty);
-        setAiElo(aiDifficulty);
+        // 2. Set up all event handlers
+        // This is safe to do early because it only attaches listeners, it doesn't run logic
+        $('.tab-button').on('click', function() { showTab($(this).data('tab')); });
+        restartButton.on('click', initGame);
+        swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
+        undoButton.on('click', () => {
+             if (!undoButton.prop('disabled')) {
+                exitReviewMode(); game.undo(); game.undo(); updateGameState(true);
+            }
+        });
+        historyFirstBtn.on('click', () => { if (!historyFirstBtn.prop('disabled')) { reviewMoveIndex = 0; showHistoryPosition(); } });
+        historyPrevBtn.on('click', () => { if (!historyPrevBtn.prop('disabled')) { if (reviewMoveIndex === null) reviewMoveIndex = game.history().length - 1; if (reviewMoveIndex > 0) reviewMoveIndex--; showHistoryPosition(); } });
+        historyNextBtn.on('click', () => { if (!historyNextBtn.prop('disabled')) { if (reviewMoveIndex === null) return; if (reviewMoveIndex < game.history().length - 1) reviewMoveIndex++; showHistoryPosition(); } });
+        historyLastBtn.on('click', exitReviewMode);
+        moveHistoryLog.on('click', '.move-span', function() { reviewMoveIndex = parseInt($(this).data('move-index')); showHistoryPosition(); });
+        liveAnalysisToggle.on('change', function() {
+            isLiveAnalysis = $(this).is(':checked');
+            liveAnalysisDisplay.toggleClass('hidden', !isLiveAnalysis).toggleClass('flex', isLiveAnalysis);
+            if (isLiveAnalysis) runLiveAnalysis();
+            else if (stockfish) stockfish.postMessage('stop');
+        });
+        themeSelector.on('change', () => {
+            localStorage.setItem('chessBoardTheme', themeSelector.val());
+            buildBoard(game.fen());
+        });
+        pieceThemeSelector.on('change', () => {
+            localStorage.setItem('chessPieceTheme', pieceThemeSelector.val());
+            buildBoard(game.fen());
+        });
+        difficultySlider.on('input', e => { 
+            aiDifficulty = parseInt(e.target.value, 10); 
+            eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200); 
+            localStorage.setItem('chessDifficulty', aiDifficulty); 
+        });
+        soundToggle.on('click', () => {
+            isMuted = !isMuted;
+            localStorage.setItem('chessSoundMuted', isMuted);
+            soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png');
+            soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off');
+        });
+        playerNameElement.on('click', () => {
+            Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' },
+                inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null })
+                .then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } });
+        });
 
+        // 3. Fetch the engine, then initialize the game
         fetch(APP_CONFIG.STOCKFISH_URL)
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');
@@ -438,6 +455,7 @@ $(document).ready(function() {
             })
             .then(text => {
                 stockfish = new Worker(URL.createObjectURL(new Blob([text], { type: 'application/javascript' })));
+                
                 stockfish.onmessage = event => {
                     const message = event.data;
                     if (message.startsWith('bestmove')) {
@@ -465,44 +483,37 @@ $(document).ready(function() {
                         }
                     }
                 };
+                
+                // 4. Populate settings and start the first game *after* engine is ready
+                // Populate dropdowns using variables from config.js
+                THEMES.forEach(theme => themeSelector.append($('<option>', { value: theme.name, text: theme.displayName })));
+                Object.keys(PIECE_THEMES).forEach(themeName => pieceThemeSelector.append($('<option>', { value: themeName, text: themeName.charAt(0).toUpperCase() + themeName.slice(1) })));
+                
+                // Load saved values from localStorage and apply them
+                themeSelector.val(localStorage.getItem('chessBoardTheme') || APP_CONFIG.DEFAULT_BOARD_THEME);
+                pieceThemeSelector.val(localStorage.getItem('chessPieceTheme') || APP_CONFIG.DEFAULT_PIECE_THEME);
+                playerName = localStorage.getItem('chessPlayerName') || 'Player';
+                playerNameElement.text(playerName);
+                aiDifficulty = parseInt(localStorage.getItem('chessDifficulty') || '5', 10);
+                difficultySlider.val(aiDifficulty);
+                eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200);
+                isMuted = localStorage.getItem('chessSoundMuted') === 'true';
+                soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png');
+                soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off');
+
                 initGame();
             })
             .catch(() => {
                 $('.p-6.rounded-lg').html(`<h3 class="text-red-400 font-bold text-center">AI Engine Failed to Load</h3><p class="text-stone-400 text-sm text-center">Please run this from a local server.</p>`);
             });
 
-        // Event Handlers
-        $('.tab-button').on('click', function() { showTab($(this).data('tab')); });
-        liveAnalysisToggle.on('change', function() {
-            isLiveAnalysis = $(this).is(':checked');
-            if (isLiveAnalysis) {
-                liveAnalysisDisplay.removeClass('hidden');
-                runLiveAnalysis();
-            } else {
-                liveAnalysisDisplay.addClass('hidden');
-                stockfish.postMessage('stop');
-            }
-        });
-        restartButton.on('click', initGame);
-        swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
-        difficultySlider.on('input', e => { aiDifficulty = parseInt(e.target.value, 10); setAiElo(aiDifficulty); localStorage.setItem('chessDifficulty', aiDifficulty); });
-        themeSelector.on('change', applyTheme);
-        pieceThemeSelector.on('change', applyPieceTheme);
-        undoButton.on('click', undoMove);
-        soundToggle.on('click', toggleSound);
-        playerNameElement.on('click', () => {
-            Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' },
-                inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null })
-                .then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } });
-        });
         boardElement.on('contextmenu', e => { e.preventDefault(); if (pendingPremove) { pendingPremove = null; removePremoveHighlight(); } });
-        historyFirstBtn.on('click', () => { if (!historyFirstBtn.prop('disabled')) { reviewMoveIndex = 0; showHistoryPosition(); } });
-        historyPrevBtn.on('click', () => { if (!historyPrevBtn.prop('disabled')) { if (reviewMoveIndex === null) reviewMoveIndex = game.history().length - 1; if (reviewMoveIndex > 0) reviewMoveIndex--; showHistoryPosition(); } });
-        historyNextBtn.on('click', () => { if (!historyNextBtn.prop('disabled')) { if (reviewMoveIndex === null) return; if (reviewMoveIndex < game.history().length - 1) reviewMoveIndex++; showHistoryPosition(); } });
-        historyLastBtn.on('click', exitReviewMode);
-        moveHistoryLog.on('click', '.move-span', function() { reviewMoveIndex = parseInt($(this).data('move-index')); showHistoryPosition(); });
+
+        $(window).on('resize', () => {
+            clearTimeout(window.resizeTimer);
+            window.resizeTimer = setTimeout(syncSidebarHeight, 150);
+        });
     }
 
-    initSounds();
     initApp();
 });
