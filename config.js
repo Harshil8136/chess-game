@@ -6,7 +6,7 @@
 const APP_CONFIG = {
     STOCKFISH_URL: 'https://cdn.jsdelivr.net/gh/niklasf/stockfish.js/stockfish.js',
     DEFAULT_BOARD_THEME: 'green',
-    DEFAULT_PIECE_THEME: 'cburnett',
+    DEFAULT_PIECE_THEME: 'alpha',
     MATE_SCORE: 10000
 };
 
