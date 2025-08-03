@@ -1,6 +1,6 @@
 $(document).ready(function() {
     // --- Element Refs ---
-    const boardElement = $('#board');
+    const boardElement = $('#game-board');
     const statusElement = $('#game-status');
     const openingNameElement = $('#opening-name');
     const themeSelector = $('#theme-selector');
@@ -48,22 +48,6 @@ $(document).ready(function() {
     let isMuted = false;
     let reviewMoveIndex = null;
 
-    // --- Constants ---
-    const THEMES = {
-        green: { light: '#eaefd2', dark: '#769656' },
-        brown: { light: '#f0d9b5', dark: '#b58863' },
-        blue:  { light: '#dee3e6', dark: '#8ca2ad' },
-        stone: { light: '#d1d1d1', dark: '#a7a7a7' }
-    };
-    const PIECE_THEMES = {
-        alpha: 'img/alpha/{piece}.png', cburnett: 'img/cburnett/{piece}.png',
-        fantasy: 'img/fantasy/{piece}.png', merida: 'img/merida/{piece}.png',
-        staunty: 'img/staunty/{piece}.png', wikipedia: 'img/wikipedia/{piece}.png',
-    };
-    const ELO_MAP = { 1: 450, 2: 600, 3: 750, 4: 900, 5: 1050, 6: 1200, 7: 1400, 8: 1600, 9: 1800, 10: 2100, 11: 2400, 12: 2700 };
-    const MATERIAL_POINTS = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-    const stockfishURL = 'https://cdn.jsdelivr.net/gh/niklasf/stockfish.js/stockfish.js';
-
     // --- Sound Functions ---
     function initSounds() {
         sounds.move = new Howl({ src: ['sounds/move-self.mp3'] });
@@ -80,7 +64,7 @@ $(document).ready(function() {
         if (isMuted) return;
         if (sounds[soundName]) sounds[soundName].play();
     }
-    
+
     function playMoveSound(move) {
         if (move.flags.includes('p')) playSound('promote');
         else if (move.flags.includes('k') || move.flags.includes('q')) playSound('castle');
@@ -102,13 +86,16 @@ $(document).ready(function() {
 
     // --- Core Game Functions ---
     function buildBoard(position = 'start') {
-        const boardTheme = THEMES[themeSelector.val()] || THEMES.green;
-        const pieceTheme = PIECE_THEMES[pieceThemeSelector.val()] || PIECE_THEMES.cburnett;
-        document.documentElement.style.setProperty('--light-square-color', boardTheme.light);
-        document.documentElement.style.setProperty('--dark-square-color', boardTheme.dark);
-        const config = { position, draggable: true, onDragStart, onDrop, pieceTheme: pieceTheme, moveSpeed: 'fast' };
+        const config = {
+            position,
+            draggable: true,
+            onDragStart,
+            onDrop,
+            pieceTheme: PIECE_THEMES[pieceThemeSelector.val()],
+            moveSpeed: 'fast'
+        };
         if (board) board.destroy();
-        board = Chessboard('board', config);
+        board = Chessboard('game-board', config);
         board.orientation(humanPlayer === 'w' ? 'white' : 'black');
         renderCoordinates();
     }
@@ -162,13 +149,11 @@ $(document).ready(function() {
         if (game.turn() !== humanPlayer) return 'snapback';
         const move = game.moves({ verbose: true }).find(m => m.from === source && m.to === target);
         if (!move) return 'snapback';
-
         if (move.flags.includes('p') && (move.to.endsWith('8') || move.to.endsWith('1'))) {
             pendingMove = { from: source, to: target, promotion: 'q' };
             showPromotionDialog(humanPlayer);
             return;
         }
-        
         const moveResult = game.move(move.san);
         if (moveResult) {
             playMoveSound(moveResult);
@@ -206,7 +191,7 @@ $(document).ready(function() {
             }
         }
     }
-    
+
     // --- AI Functions ---
     function makeAiMove() {
         if (!gameActive || game.game_over()) {
@@ -271,8 +256,10 @@ $(document).ready(function() {
     }
 
     function applyTheme() {
-        localStorage.setItem('chessBoardTheme', themeSelector.val());
-        buildBoard(game.fen());
+        const selectedTheme = THEMES.find(t => t.name === themeSelector.val()) || THEMES[0];
+        document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
+        document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
+        localStorage.setItem('chessBoardTheme', selectedTheme.name);
     }
 
     function applyPieceTheme() {
@@ -393,23 +380,10 @@ $(document).ready(function() {
         if (game.in_checkmate()) { title = "Checkmate!"; msg = `${game.turn() === 'w' ? 'Black' : 'White'} wins.`; }
         else { title = "Draw!"; if (game.in_stalemate()) msg = "Draw by Stalemate."; else if (game.in_threefold_repetition()) msg = "Draw by Threefold Repetition."; else if (game.insufficient_material()) msg = "Draw due to Insufficient Material."; else msg = "The game is a draw."; }
         playSound('gameEnd');
-        
-        // **MODIFIED**: Added "Analyze Game" button to the popup.
         Swal.fire({
-            title: title, text: msg, icon: 'info',
-            showDenyButton: true,
-            confirmButtonText: 'Play Again',
-            denyButtonText: 'Analyze Game',
+            title: title, text: msg, icon: 'info', confirmButtonText: 'Play Again',
             customClass: { popup: '!bg-stone-800', title: '!text-white', htmlContainer: '!text-stone-300' }
-        }).then((result) => {
-            if (result.isConfirmed) {
-                initGame();
-            } else if (result.isDenied) {
-                // Save the game PGN and switch to the analysis page
-                localStorage.setItem('gameToAnalyze', game.pgn());
-                window.location.href = 'analysis.html';
-            }
-        });
+        }).then((result) => { if (result.isConfirmed) initGame(); });
     }
     
     // --- Application Entry Point ---
