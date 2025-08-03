@@ -38,7 +38,7 @@ $(document).ready(function() {
     let gameActive = true;
     let humanPlayer = 'w';
     let aiPlayer = 'b';
-    let aiDifficulty = 4;
+    let aiDifficulty = 5;
     let pendingMove = null;
     let pendingPremove = null;
     let playerName = 'Player';
@@ -67,7 +67,7 @@ $(document).ready(function() {
         if (isMuted) return;
         if (sounds[soundName]) sounds[soundName].play();
     }
-
+    
     function playMoveSound(move) {
         if (move.flags.includes('p')) playSound('promote');
         else if (move.flags.includes('k') || move.flags.includes('q')) playSound('castle');
