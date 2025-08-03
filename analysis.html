@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Game Analysis</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
+
+    <style>
+        :root { --light-square-color: #eaefd2; --dark-square-color: #769656; }
+        body { font-family: 'Inter', sans-serif; background-color: #372d24; }
+        #board { box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 8px solid #5d4037; }
+        .white-1e1d7 { background-color: var(--light-square-color) !important; }
+        .black-3c85d { background-color: var(--dark-square-color) !important; }
+        #analysis-move-list { height: 350px; overflow-y: auto; }
+        .analysis-move-item:hover { background-color: rgba(255,255,255,0.1); cursor: pointer; }
+        .current-move-analysis { background-color: rgba(255, 193, 7, 0.3); }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8">
+        <main class="w-full max-w-[720px] flex flex-col gap-2 text-white">
+            <div id="board" class="w-full"></div>
+            <div>
+                <canvas id="eval-chart" class="bg-black bg-opacity-20 rounded-lg p-2 mt-4"></canvas>
+            </div>
+        </main>
+        
+        <aside class="w-full lg:w-96 text-white p-6 rounded-lg bg-black bg-opacity-20 flex flex-col gap-4">
+            <div class="text-center">
+                <h1 class="text-4xl font-bold">Game Analysis</h1>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors text-lg">Analyze Game</button>
+                <a href="index.html" class="w-full text-center px-4 py-3 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors text-lg">Play New Game</a>
+            </div>
+
+            <div id="move-assessment-details" class="hidden p-3 rounded-lg bg-stone-900/50">
+                <h3 id="assessment-title" class="text-lg font-bold">Best Move</h3>
+                <p id="assessment-comment" class="text-stone-300"></p>
+            </div>
+            
+            <div class="border-t border-stone-700 pt-4">
+                <h3 class="font-bold text-lg mb-2">Move List</h3>
+                <div id="analysis-move-list" class="bg-black bg-opacity-20 rounded-lg p-2">
+                    </div>
+            </div>
+        </aside>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.12.0/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script src="config.js"></script>
+
+    <script src="analysis.js"></script>
+</body>
+</html>
