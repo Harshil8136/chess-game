@@ -4,11 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Chess</title>
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
+
     <style>
         :root { --light-square-color: #eaefd2; --dark-square-color: #769656; }
         body { font-family: 'Inter', sans-serif; background-color: #262522; }
@@ -27,7 +29,7 @@
         .tab-button { color: #a8a29e; border-bottom: 3px solid transparent; }
         .tab-button.active { color: #f5f5f4; border-bottom-color: #78716c; }
         .tab-content { display: none; }
-        .tab-content.active { display: flex; } /* Use flex for layout */
+        .tab-content.active { display: flex; }
         .control-btn, .history-nav-btn { background-color: rgba(255,255,255,0.1); border-radius: 50%; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
         .control-btn:hover, .history-nav-btn:hover { background-color: rgba(255,255,255,0.2); }
         .control-btn:disabled, .history-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -35,24 +37,20 @@
         .move-span { padding: 2px 4px; }
         .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; border-radius: 3px; }
         .highlight-move { background-color: rgba(255, 193, 7, 0.3); border-radius: 3px; }
-        .move-history-log { height: 300px; overflow-y:auto; font-family:monospace; font-size:1rem; line-height:1.75rem; }
-        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #52525b; transition: .4s; border-radius: 22px; }
-        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: #16a34a; }
-        input:checked + .slider:before { transform: translateX(18px); }
+        .move-history-log { flex-grow: 1; overflow-y: auto; }
+        .analysis-move-item { cursor: pointer; transition: background-color 0.2s; padding: 4px 8px; border-radius: 4px; }
+        .analysis-move-item:hover { background-color: #504d49; }
+        .current-move-analysis { background-color: #5a83b4 !important; color: white; }
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-4 bg-stone-900">
 
-    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8">
-        
-        <div class="w-full lg:flex-1 flex justify-center items-stretch gap-3">
+    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-8">
+        <div id="board-area-container" class="w-full lg:flex-1 flex justify-center items-center">
             <main class="w-full max-w-[720px] flex flex-col gap-2 text-white">
                 <header class="flex justify-between items-center mb-1 p-2 bg-black/20 rounded-md">
                     <span id="top-player-name" class="font-bold text-lg">AI (Black)</span>
-                    <div id="captured-by-black" class="flex flex-wrap items-center min-h-[32px]"></div>
+                    <div id="captured-by-black" class="flex flex-wrap items-center min-h-[32px] bg-stone-800/50 rounded-md p-1"></div>
                     <span id="black-advantage" class="font-bold text-green-400"></span>
                 </header>
                 <div class="board-wrapper">
@@ -62,25 +60,28 @@
                 </div>
                 <footer class="flex justify-between items-center mt-1 p-2 bg-black/20 rounded-md">
                     <span id="bottom-player-name" class="font-bold text-lg">Player (White)</span>
-                    <div id="captured-by-white" class="flex flex-wrap items-center min-h-[32px]"></div>
+                    <div id="captured-by-white" class="flex flex-wrap items-center min-h-[32px] bg-stone-800/50 rounded-md p-1"></div>
                     <span id="white-advantage" class="font-bold text-green-400"></span>
                 </footer>
             </main>
         </div>
 
-        <aside class="w-full lg:w-96 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col self-stretch">
+        <aside class="w-full lg:w-96 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
             <section class="text-center pb-4 border-b border-stone-700">
-                <h1 id="game-status" class="text-2xl font-bold h-8">White's Turn</h1>
-                <p id="opening-name" class="text-sm text-stone-400 h-6"></p>
+                <div class="flex justify-between items-center mb-2">
+                    <h1 id="game-status" class="text-2xl font-bold h-8 text-left flex-grow">White's Turn</h1>
+                    <div class="flex-shrink-0">
+                        <button id="sound-toggle" class="control-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button>
+                    </div>
+                </div>
+                <p id="opening-name" class="text-sm text-stone-400 h-6 text-left"></p>
             </section>
-
             <nav class="flex border-b border-stone-700">
                 <button data-tab="moves" class="tab-button flex-1 p-2 text-base font-bold active">Moves</button>
                 <button data-tab="analysis" class="tab-button flex-1 p-2 text-base font-bold">Analysis</button>
                 <button data-tab="settings" class="tab-button flex-1 p-2 text-base font-bold">Settings</button>
             </nav>
-
-            <div class="flex-grow pt-4 overflow-y-auto">
+            <div class="flex-grow pt-4 overflow-y-auto flex flex-col">
                 <div id="moves-tab" class="tab-content active h-full flex-col gap-4">
                     <div class="flex justify-center items-center gap-4">
                         <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
@@ -88,26 +89,26 @@
                         <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
                         <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
                     </div>
-                    <div id="move-history-log" class="move-history-log flex-grow p-2 bg-stone-800/50 rounded-md"></div>
+                    <div id="move-history-log" class="move-history-log p-2 bg-stone-800/50 rounded-md"></div>
                     <div class="grid grid-cols-3 gap-2">
                          <button id="restart-button" class="w-full px-4 py-2 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors">New Game</button>
                          <button id="swap-sides-button" class="w-full px-4 py-2 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors">Swap Sides</button>
                          <button id="undo-button" class="w-full px-4 py-2 bg-stone-600 text-white font-bold rounded-lg shadow-md hover:bg-stone-700 flex items-center justify-center gap-2"><img src="icon/arrow-uturn-left.png" alt="Undo" class="w-5 h-5"> Undo</button>
                     </div>
                 </div>
-
+                
                 <div id="analysis-tab" class="tab-content h-full flex-col gap-4">
-                    <div class="flex justify-between items-center p-2 bg-stone-800/50 rounded-lg">
-                        <span class="font-bold text-lg">Live Analysis</span>
-                        <label class="switch"><input type="checkbox" id="live-analysis-toggle"><span class="slider"></span></label>
+                    <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800">Run Game Review</button>
+                    <div id="review-progress-bar" class="w-full bg-gray-700 rounded-full h-2.5 hidden">
+                        <div class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
                     </div>
-                    <div id="live-analysis-display" class="hidden flex-col gap-2 text-center p-4 bg-stone-800/50 rounded-lg">
-                        <p class="font-bold text-lg">Best Move: <span id="top-engine-move" class="text-amber-300">...</span></p>
-                        <p class="text-sm text-stone-400">Continuation: <span id="top-engine-line">...</span></p>
+                    <div id="move-assessment-details" class="p-3 bg-black/20 rounded-md space-y-1 text-center hidden">
+                        <h4 id="assessment-title" class="text-lg font-bold text-sky-300">Move Assessment</h4>
+                        <p id="assessment-comment" class="text-sm text-gray-300">Details about the move will appear here.</p>
                     </div>
-                    <div class="text-center mt-4">
-                        <p class="text-stone-400 mb-2">After the game, run a full review:</p>
-                        <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 disabled:bg-sky-900 disabled:cursor-not-allowed" disabled>Game Review</button>
+                    <div id="analysis-move-list" class="flex-grow overflow-y-auto bg-black/20 rounded-md p-1 space-y-1"></div>
+                    <div class="h-28 flex-shrink-0">
+                        <canvas id="eval-chart" class="w-full h-full"></canvas>
                     </div>
                 </div>
 
@@ -125,7 +126,6 @@
                          <label for="piece-theme-selector" class="font-bold text-lg mb-2 block">Piece Theme</label>
                          <select id="piece-theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-600 border"></select>
                     </div>
-                    <div class="flex justify-between items-center"><span class="font-bold text-lg">Sound:</span><button id="sound-toggle" class="control-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button></div>
                 </div>
             </div>
         </aside>
@@ -141,5 +141,6 @@
     
     <script src="config.js"></script>
     <script src="script.js"></script>
+    <script src="analysis.js"></script>
 </body>
 </html>
