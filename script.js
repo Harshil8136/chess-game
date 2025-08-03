@@ -52,17 +52,21 @@ $(document).ready(function() {
     let isMuted = false;
     let reviewMoveIndex = null;
     let isLiveAnalysis = false;
+    let engineTimeout = null; // For the AI failsafe
 
     // --- Layout and UI Functions ---
     function syncSidebarHeight() {
-        const boardArea = $('#board-area-container');
-        const sidebar = $('aside');
-        if (boardArea.length && sidebar.length && window.innerWidth >= 1024) {
-            requestAnimationFrame(() => {
-                sidebar.css('height', boardArea.outerHeight());
-            });
-        } else if (sidebar.length) {
-            sidebar.css('height', 'auto');
+        const boardArea = document.getElementById('board-area-container');
+        const sidebar = document.querySelector('aside');
+        if (boardArea && sidebar) {
+            if (window.innerWidth >= 1024) {
+                requestAnimationFrame(() => {
+                    const boardHeight = boardArea.offsetHeight;
+                    sidebar.style.height = `${boardHeight}px`;
+                });
+            } else {
+                sidebar.style.height = 'auto';
+            }
         }
     }
 
@@ -98,7 +102,6 @@ $(document).ready(function() {
         const selectedTheme = THEMES.find(t => t.name === themeSelector.val()) || THEMES[0];
         document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
         document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
-        
         const config = { position, draggable: true, onDragStart, onDrop, pieceTheme: PIECE_THEMES[pieceThemeSelector.val()], moveSpeed: 'fast' };
         if (board) board.destroy();
         board = Chessboard('board', config);
@@ -178,6 +181,7 @@ $(document).ready(function() {
     }
     
     function performMove(move) {
+        clearTimeout(engineTimeout); // AI responded, so clear the failsafe
         const moveResult = game.move(move, { sloppy: true });
         isStockfishThinking = false;
         if (moveResult) {
@@ -201,6 +205,14 @@ $(document).ready(function() {
         if (!gameActive || game.game_over()) return;
         isStockfishThinking = true;
         statusElement.text("AI is thinking...").addClass('thinking-animation');
+        
+        // **FIX**: Failsafe to prevent the game from getting stuck permanently.
+        engineTimeout = setTimeout(() => {
+            isStockfishThinking = false;
+            statusElement.text("AI Timeout. Please move.").removeClass('thinking-animation');
+            updateStatus();
+        }, 20000); // 20 seconds
+
         const difficulty = DIFFICULTY_SETTINGS[aiDifficulty];
         stockfish.postMessage(`position fen ${game.fen()}`);
         switch (difficulty.type) {
@@ -236,9 +248,7 @@ $(document).ready(function() {
         if (reviewMoveIndex === null) return;
         const history = game.history({ verbose: true });
         const tempGame = new Chess();
-        for (let i = 0; i <= reviewMoveIndex; i++) {
-            tempGame.move(history[i].san);
-        }
+        for (let i = 0; i <= reviewMoveIndex; i++) { tempGame.move(history[i].san); }
         board.position(tempGame.fen());
         updateMoveHistoryDisplay();
         updateNavButtons();
@@ -313,20 +323,13 @@ $(document).ready(function() {
         undoButton.prop('disabled', !isPlayerTurn || game.history().length < 2);
     }
     
+    // **FIX**: Moved these functions inside the document.ready scope to fix the move history bug.
     function updateCapturedPieces() {
         const pieceThemePath = PIECE_THEMES[pieceThemeSelector.val()];
         if (!pieceThemePath) return;
         const piecesCapturedByWhite = [];
         const piecesCapturedByBlack = [];
-        game.history({ verbose: true }).forEach(move => {
-            if (move.captured) {
-                if (move.color === 'w') {
-                    piecesCapturedByWhite.push({ type: move.captured, color: 'b' });
-                } else {
-                    piecesCapturedByBlack.push({ type: move.captured, color: 'w' });
-                }
-            }
-        });
+        game.history({ verbose: true }).forEach(move => { if (move.captured) { if (move.color === 'w') { piecesCapturedByWhite.push({ type: move.captured, color: 'b' }); } else { piecesCapturedByBlack.push({ type: move.captured, color: 'w' }); } } });
         const pieceOrder = { p: 1, n: 2, b: 3, r: 4, q: 5 };
         piecesCapturedByWhite.sort((a,b) => pieceOrder[a.type] - pieceOrder[b.type]);
         piecesCapturedByBlack.sort((a,b) => pieceOrder[a.type] - pieceOrder[b.type]);
@@ -361,11 +364,11 @@ $(document).ready(function() {
         }
         updateNavButtons();
     }
-    
+
     function showPromotionDialog(color) {
         const pieceThemePath = PIECE_THEMES[pieceThemeSelector.val()];
         const pieces = ['q', 'r', 'b', 'n'];
-        const promotion_choices_html = pieces.map(p => `<img src="${pieceThemePath.replace('{piece}', `${color}${p.toUpperCase()}`)}" data-piece="${p}" class="promotion-piece" style="cursor: pointer; padding: 5px; width: 60px; height: 60px;" />`).join('');
+        const promotion_choices_html = pieces.map(p => `<img src="${pieceThemePath.replace('{piece}', `${color}${p.toUpperCase()}`)}" data-piece="${p}" class="promotion-piece" style="cursor: pointer; padding: 5px; border-radius: 5px; width: 60px; height: 60px;" onmouseover="this.style.backgroundColor='#4a5568';" onmouseout="this.style.backgroundColor='transparent';" />`).join('');
         Swal.fire({
             title: 'Promote to:', html: `<div style="display: flex; justify-content: space-around;">${promotion_choices_html}</div>`,
             showConfirmButton: false, allowOutsideClick: false, customClass: { popup: '!bg-stone-700', title: '!text-white' },
@@ -396,63 +399,49 @@ $(document).ready(function() {
     
     // --- Application Initialization ---
     function initApp() {
-        // This function now primarily handles the order of operations
-        
-        // 1. Initialize sounds (no dependencies)
         initSounds();
-
-        // 2. Set up all event handlers
-        // This is safe to do early because it only attaches listeners, it doesn't run logic
+        
         $('.tab-button').on('click', function() { showTab($(this).data('tab')); });
         restartButton.on('click', initGame);
         swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
-        undoButton.on('click', () => {
-             if (!undoButton.prop('disabled')) {
-                exitReviewMode(); game.undo(); game.undo(); updateGameState(true);
-            }
-        });
+        undoButton.on('click', () => { if (!undoButton.prop('disabled')) { exitReviewMode(); game.undo(); game.undo(); updateGameState(true); } });
         historyFirstBtn.on('click', () => { if (!historyFirstBtn.prop('disabled')) { reviewMoveIndex = 0; showHistoryPosition(); } });
         historyPrevBtn.on('click', () => { if (!historyPrevBtn.prop('disabled')) { if (reviewMoveIndex === null) reviewMoveIndex = game.history().length - 1; if (reviewMoveIndex > 0) reviewMoveIndex--; showHistoryPosition(); } });
         historyNextBtn.on('click', () => { if (!historyNextBtn.prop('disabled')) { if (reviewMoveIndex === null) return; if (reviewMoveIndex < game.history().length - 1) reviewMoveIndex++; showHistoryPosition(); } });
         historyLastBtn.on('click', exitReviewMode);
         moveHistoryLog.on('click', '.move-span', function() { reviewMoveIndex = parseInt($(this).data('move-index')); showHistoryPosition(); });
+        
         liveAnalysisToggle.on('change', function() {
             isLiveAnalysis = $(this).is(':checked');
-            liveAnalysisDisplay.toggleClass('hidden', !isLiveAnalysis).toggleClass('flex', isLiveAnalysis);
-            if (isLiveAnalysis) runLiveAnalysis();
-            else if (stockfish) stockfish.postMessage('stop');
-        });
-        themeSelector.on('change', () => {
-            localStorage.setItem('chessBoardTheme', themeSelector.val());
-            buildBoard(game.fen());
-        });
-        pieceThemeSelector.on('change', () => {
-            localStorage.setItem('chessPieceTheme', pieceThemeSelector.val());
-            buildBoard(game.fen());
-        });
-        difficultySlider.on('input', e => { 
-            aiDifficulty = parseInt(e.target.value, 10); 
-            eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200); 
-            localStorage.setItem('chessDifficulty', aiDifficulty); 
-        });
-        soundToggle.on('click', () => {
-            isMuted = !isMuted;
-            localStorage.setItem('chessSoundMuted', isMuted);
-            soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png');
-            soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off');
-        });
-        playerNameElement.on('click', () => {
-            Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' },
-                inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null })
-                .then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } });
+            if (isLiveAnalysis) {
+                liveAnalysisDisplay.removeClass('hidden');
+                runLiveAnalysis();
+            } else {
+                liveAnalysisDisplay.addClass('hidden');
+                if (stockfish) stockfish.postMessage('stop');
+                topEngineMoveElement.text('...');
+                topEngineLineElement.text('...');
+            }
         });
 
-        // 3. Fetch the engine, then initialize the game
+        runAnalysisBtn.on('click', function() {
+            if ($(this).prop('disabled')) return;
+            if (typeof runGameReview === 'function') {
+                runGameReview(game.history({ verbose: true }), stockfish);
+                $(this).prop('disabled', true).text('Reviewing...');
+            } else {
+                Swal.fire('Error', 'Game Review feature is not available.', 'error');
+            }
+        });
+
+        themeSelector.on('change', () => { localStorage.setItem('chessBoardTheme', themeSelector.val()); buildBoard(game.fen()); });
+        pieceThemeSelector.on('change', () => { localStorage.setItem('chessPieceTheme', pieceThemeSelector.val()); buildBoard(game.fen()); });
+        difficultySlider.on('input', e => { aiDifficulty = parseInt(e.target.value, 10); eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200); localStorage.setItem('chessDifficulty', aiDifficulty); });
+        soundToggle.on('click', () => { isMuted = !isMuted; localStorage.setItem('chessSoundMuted', isMuted); soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png'); soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off'); });
+        playerNameElement.on('click', () => { Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' }, inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null }).then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } }); });
+
         fetch(APP_CONFIG.STOCKFISH_URL)
-            .then(response => {
-                if (!response.ok) throw new Error('Network response was not ok');
-                return response.text();
-            })
+            .then(response => { if (!response.ok) throw new Error('Network response was not ok'); return response.text(); })
             .then(text => {
                 stockfish = new Worker(URL.createObjectURL(new Blob([text], { type: 'application/javascript' })));
                 
@@ -471,25 +460,24 @@ $(document).ready(function() {
                         if (isLiveAnalysis && !isStockfishThinking) {
                             const pvMatch = message.match(/pv (.+)/);
                             if (pvMatch) {
-                                const tempGame = new Chess(game.fen());
-                                const moves = pvMatch[1].split(' ');
-                                const firstMove = tempGame.move(moves[0], { sloppy: true });
-                                if (firstMove) {
-                                    topEngineMoveElement.text(firstMove.san);
-                                    const nextMoves = moves.slice(1).map(uci => tempGame.move(uci, { sloppy: true })?.san).filter(Boolean).join(' ');
-                                    topEngineLineElement.text(nextMoves);
-                                }
+                                try {
+                                    const tempGame = new Chess(game.fen());
+                                    const moves = pvMatch[1].split(' ');
+                                    const firstMove = tempGame.move(moves[0], { sloppy: true });
+                                    if (firstMove) {
+                                        topEngineMoveElement.text(firstMove.san);
+                                        const nextMoves = moves.slice(1).map(uci => { const nextMove = tempGame.move(uci, { sloppy: true }); return nextMove ? nextMove.san : ''; }).filter(Boolean).join(' ');
+                                        topEngineLineElement.text(nextMoves);
+                                    }
+                                } catch (e) { /* Catch rare parsing errors */ }
                             }
                         }
                     }
                 };
                 
-                // 4. Populate settings and start the first game *after* engine is ready
-                // Populate dropdowns using variables from config.js
                 THEMES.forEach(theme => themeSelector.append($('<option>', { value: theme.name, text: theme.displayName })));
                 Object.keys(PIECE_THEMES).forEach(themeName => pieceThemeSelector.append($('<option>', { value: themeName, text: themeName.charAt(0).toUpperCase() + themeName.slice(1) })));
                 
-                // Load saved values from localStorage and apply them
                 themeSelector.val(localStorage.getItem('chessBoardTheme') || APP_CONFIG.DEFAULT_BOARD_THEME);
                 pieceThemeSelector.val(localStorage.getItem('chessPieceTheme') || APP_CONFIG.DEFAULT_PIECE_THEME);
                 playerName = localStorage.getItem('chessPlayerName') || 'Player';
@@ -504,15 +492,11 @@ $(document).ready(function() {
                 initGame();
             })
             .catch(() => {
-                $('.p-6.rounded-lg').html(`<h3 class="text-red-400 font-bold text-center">AI Engine Failed to Load</h3><p class="text-stone-400 text-sm text-center">Please run this from a local server.</p>`);
+                $('aside').html(`<div class="text-red-400 font-bold text-center p-4">CRITICAL ERROR:<br>Could not load stockfish.js.<br><br>Please run from a local server.</div>`);
             });
 
         boardElement.on('contextmenu', e => { e.preventDefault(); if (pendingPremove) { pendingPremove = null; removePremoveHighlight(); } });
-
-        $(window).on('resize', () => {
-            clearTimeout(window.resizeTimer);
-            window.resizeTimer = setTimeout(syncSidebarHeight, 150);
-        });
+        $(window).on('resize', () => { clearTimeout(window.resizeTimer); window.resizeTimer = setTimeout(syncSidebarHeight, 150); });
     }
 
     initApp();
