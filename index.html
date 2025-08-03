@@ -44,17 +44,22 @@
         .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; border-radius: 3px; }
         .highlight-move { background-color: rgba(255, 193, 7, 0.3); border-radius: 3px; }
         .move-history-log { height: 300px; overflow-y:auto; font-family:monospace; font-size:1rem; line-height:1.75rem; }
+        /* Toggle Switch Style */
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #52525b; transition: .4s; border-radius: 22px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #16a34a; }
+        input:checked + .slider:before { transform: translateX(18px); }
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-2 sm:p-4">
 
-    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-start justify-center gap-4 lg:gap-8">
-        <div class="w-full lg:flex-1 flex justify-center items-stretch gap-3 min-w-0">
-            <div class="flex items-center">
-                <div id="eval-bar-container" class="w-5 h-full bg-stone-900/50 rounded-full overflow-hidden flex flex-col">
-                    <div id="eval-bar-black" class="w-full bg-stone-800 transition-all duration-500" style="height:50%;"></div>
-                    <div id="eval-bar-white" class="w-full bg-stone-200 transition-all duration-500" style="height:50%;"></div>
-                </div>
+    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-4 lg:gap-8">
+        <div class="w-full lg:flex-1 flex justify-center items-center gap-3 min-w-0">
+            <div id="eval-bar-container" class="w-5 h-full bg-stone-900/50 rounded-full overflow-hidden flex-col self-stretch hidden sm:flex">
+                <div id="eval-bar-black" class="w-full bg-stone-800 transition-all duration-500" style="height:50%;"></div>
+                <div id="eval-bar-white" class="w-full bg-stone-200 transition-all duration-500" style="height:50%;"></div>
             </div>
             <main class="w-full max-w-[calc(100vh-120px)] sm:max-w-[720px] flex flex-col gap-2 text-white">
                 <div>
@@ -73,8 +78,8 @@
             </main>
         </div>
 
-        <aside class="w-full lg:w-96 lg:max-w-sm text-white p-4 rounded-lg bg-stone-900/50 flex flex-col gap-4">
-            <div class="text-center">
+        <aside class="w-full lg:w-96 lg:max-w-sm text-white p-4 rounded-lg bg-stone-900/50 flex flex-col">
+            <div class="text-center mb-4">
                 <h1 id="game-status" class="text-2xl font-bold h-8">White's Turn</h1>
                 <p id="opening-name" class="text-sm text-stone-400 h-6"></p>
             </div>
@@ -85,7 +90,7 @@
                 <button data-tab="settings" class="tab-button flex-1">Settings</button>
             </div>
 
-            <div class="flex-grow">
+            <div class="flex-grow pt-4 overflow-y-auto">
                 <div id="moves-tab" class="tab-content active flex flex-col gap-4">
                     <div id="history-controls" class="flex justify-center items-center gap-4">
                         <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
@@ -103,10 +108,22 @@
                     </div>
                 </div>
 
-                <div id="analysis-tab" class="tab-content flex flex-col items-center justify-center gap-4 text-center h-full">
-                     <img src="icon/light-bulb.png" alt="Analysis" class="w-16 h-16 opacity-30">
-                     <p class="text-stone-400">Game analysis will be available here after the game ends.</p>
-                     <button id="run-analysis-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors text-lg hidden">Run Game Review</button>
+                <div id="analysis-tab" class="tab-content flex flex-col gap-4">
+                    <div class="flex justify-between items-center p-2 bg-stone-800/50 rounded-lg">
+                        <span class="font-bold text-lg">Live Analysis</span>
+                        <label class="switch">
+                            <input type="checkbox" id="live-analysis-toggle">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div id="live-analysis-display" class="hidden flex-col gap-2 text-center p-4 bg-stone-800/50 rounded-lg">
+                        <p class="font-bold text-lg">Best Move: <span id="top-engine-move" class="text-amber-300">...</span></p>
+                        <p class="text-sm text-stone-400">Continuation: <span id="top-engine-line">...</span></p>
+                    </div>
+                    <div class="text-center mt-4">
+                        <p class="text-stone-400 mb-2">After the game, run a full review:</p>
+                        <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors disabled:bg-sky-900 disabled:cursor-not-allowed" disabled>Game Review</button>
+                    </div>
                 </div>
 
                 <div id="settings-tab" class="tab-content flex flex-col gap-6">
