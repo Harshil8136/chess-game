@@ -4,17 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Chess</title>
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
+
     <style>
         :root { --light-square-color: #F0D9B5; --dark-square-color: #B58863; }
         body { font-family: 'Inter', sans-serif; background-color: #262522; }
         #board { box-shadow: 0 10px 25px rgba(0,0,0,0.25); border: 8px solid #403c37; }
         .white-1e1d7 { background-color: var(--light-square-color) !important; }
         .black-3c85d { background-color: var(--dark-square-color) !important; }
+        
+        /* **FIXED**: Set a strict size for captured pieces to prevent them from becoming huge */
+        .captured-piece { width: 28px; height: 28px; margin: 2px; }
+
+        .thinking-animation { animation:pulse 1.5s ease-in-out infinite; } @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
         .board-wrapper { display: grid; grid-template-columns: 24px 1fr 24px; grid-template-rows: 24px 1fr 24px; justify-items: center; align-items: center; gap: 4px; }
         #board { grid-column: 2; grid-row: 2; }
         .coordinates { color: #c7bca1; font-weight: 600; font-size: 0.9rem; pointer-events: none; user-select: none; }
@@ -44,8 +51,9 @@
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-2 sm:p-4">
-    <div class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-4 lg:gap-8">
-        <div class="w-full lg:flex-1 flex justify-center items-center gap-3 min-w-0">
+
+    <div class="w-full max-w-screen-xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_auto] items-start gap-4 lg:gap-8">
+        <div class="w-full flex justify-center items-center gap-3 min-w-0">
             <div id="eval-bar-container" class="w-5 h-full bg-stone-900/50 rounded-full overflow-hidden flex-col self-stretch hidden sm:flex">
                 <div id="eval-bar-black" class="w-full bg-stone-800 transition-all duration-500" style="height:50%;"></div>
                 <div id="eval-bar-white" class="w-full bg-stone-200 transition-all duration-500" style="height:50%;"></div>
@@ -67,9 +75,10 @@
             </main>
         </div>
 
-        <aside class="w-full lg:w-96 lg:max-w-sm text-white p-4 rounded-lg bg-stone-900/50 flex flex-col">
+        <aside class="w-full lg:w-96 text-white p-4 rounded-lg bg-stone-900/50 flex flex-col self-stretch">
             <div class="text-center mb-4">
                 <h1 id="game-status" class="text-2xl font-bold h-8">White's Turn</h1>
+                <p id="opening-name" class="text-sm text-stone-400 h-6"></p>
             </div>
 
             <div class="flex border-b border-stone-700">
@@ -92,7 +101,6 @@
                          <button id="swap-sides-button" class="w-full px-4 py-2 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors">Swap Sides</button>
                          <button id="undo-button" class="w-full px-4 py-2 bg-stone-600 text-white font-bold rounded-lg shadow-md hover:bg-stone-700 transition-colors flex items-center justify-center gap-2"><img src="icon/arrow-uturn-left.png" alt="Undo" class="w-5 h-5"> Undo</button>
                     </div>
-                    <p id="opening-name" class="text-sm text-stone-400 h-6 text-center"></p>
                 </div>
 
                 <div id="analysis-tab" class="tab-content flex flex-col gap-4">
@@ -137,6 +145,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <script src="config.js"></script>
     <script src="script.js"></script>
 </body>
