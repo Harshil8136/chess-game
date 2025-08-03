@@ -33,16 +33,25 @@ const PIECE_THEMES = {
     xkcd: 'img/xkcd/{piece}.png'
 };
 
-const ELO_MAP = { 
-    1: 450, 2: 600, 3: 750, 4: 900, 5: 1050, 6: 1200, 
-    7: 1400, 8: 1600, 9: 1800, 10: 2100, 11: 2400, 12: 2700 
+const DIFFICULTY_SETTINGS = {
+    1: { elo: 450,  type: 'random' },
+    2: { elo: 650,  type: 'greedy' },
+    3: { elo: 850,  type: 'stockfish', depth: 2 },
+    4: { elo: 1000, type: 'stockfish', depth: 4 },
+    5: { elo: 1200, type: 'stockfish', depth: 6 },
+    6: { elo: 1400, type: 'stockfish', depth: 8 },
+    7: { elo: 1600, type: 'stockfish', movetime: 500 },
+    8: { elo: 1800, type: 'stockfish', movetime: 800 },
+    9: { elo: 2000, type: 'stockfish', movetime: 1200 },
+    10: { elo: 2200, type: 'stockfish', movetime: 1600 },
+    11: { elo: 2400, type: 'stockfish', movetime: 2000 },
+    12: { elo: 2700, type: 'stockfish', movetime: 2500 }
 };
 
 const MATERIAL_POINTS = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 
-// Storing sound paths here. The main script will load them.
 const SOUND_PATHS = {
-    'move': 'sounds/move-self.mp3',
+    'moveSelf': 'sounds/move-self.mp3',
     'capture': 'sounds/capture.mp3',
     'check': 'sounds/move-check.mp3',
     'gameEnd': 'sounds/game-end.mp3',
@@ -55,15 +64,9 @@ const SOUND_PATHS = {
 const OPENINGS = [
     { pgn: "1. e4", name: "King's Pawn Opening" }, { pgn: "1. d4", name: "Queen's Pawn Opening" },
     { pgn: "1. c4", name: "English Opening" }, { pgn: "1. Nf3", name: "Zukertort Opening" },
-    { pgn: "1. f4", name: "Bird's Opening" }, { pgn: "1. e4 e5", name: "King's Pawn Game" },
-    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bc4", name: "Italian Game" }, { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5", name: "Giuoco Piano" },
-    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bb5", name: "Ruy López" }, { pgn: "1. e4 e5 2. Nf3 Nc6 3. d4", name: "Scotch Game" },
-    { pgn: "1. e4 e5 2. Nf3 d6", name: "Philidor Defence" }, { pgn: "1. e4 e5 2. f4", name: "King's Gambit" },
-    { pgn: "1. e4 c5", name: "Sicilian Defence" }, { pgn: "1. e4 c6", name: "Caro-Kann Defence" },
-    { pgn: "1. e4 d5", name: "Scandinavian Defence" }, { pgn: "1. e4 e6", name: "French Defence" },
-    { pgn: "1. d4 d5", name: "Queen's Pawn Game" }, { pgn: "1. d4 d5 2. c4", name: "Queen's Gambit" },
-    { pgn: "1. d4 d5 2. c4 dxc4", name: "Queen's Gambit Accepted" }, { pgn: "1. d4 d5 2. c4 e6", name: "Queen's Gambit Declined" },
-    { pgn: "1. d4 Nf6", name: "Indian Defence" }, { pgn: "1. d4 Nf6 2. c4 g6", name: "King's Indian Defence" },
-    { pgn: "1. d4 Nf6 2. c4 e6 3. Nc3 Bb4", name: "Nimzo-Indian Defence" }, { pgn: "1. d4 Nf6 2. c4 e6 3. Nf3 b6", name: "Queen's Indian Defence" },
-    { pgn: "1. d4 f5", name: "Dutch Defence" }
+    { pgn: "1. e4 e5", name: "King's Pawn Game" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bc4", name: "Italian Game" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bb5", name: "Ruy López" },
+    { pgn: "1. e4 c5", name: "Sicilian Defence" },
+    { pgn: "1. d4 d5 2. c4", name: "Queen's Gambit" }
 ];
