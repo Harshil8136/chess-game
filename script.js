@@ -152,8 +152,6 @@ $(document).ready(function() {
     // --- Move Handling ---
     function onDrop(source, target) {
         if (reviewMoveIndex !== null) return;
-
-        // **FIXED**: Handle premove and snap the piece back.
         if (isStockfishThinking && game.turn() !== humanPlayer) {
             removePremoveHighlight();
             pendingPremove = { from: source, to: target };
@@ -161,7 +159,6 @@ $(document).ready(function() {
             $(`.square-${target}`).addClass('premove-highlight');
             return 'snapback';
         }
-
         if (game.turn() !== humanPlayer) return 'snapback';
         const move = game.moves({ verbose: true }).find(m => m.from === source && m.to === target);
         if (!move) return 'snapback';
@@ -180,7 +177,6 @@ $(document).ready(function() {
     }
 
     function onDragStart(source, piece) {
-        // **FIXED**: Allow dragging your own pieces when it's your turn OR when the AI is thinking.
         return reviewMoveIndex === null && gameActive && !game.game_over() && piece.startsWith(humanPlayer) && (game.turn() === humanPlayer || isStockfishThinking);
     }
     
@@ -397,10 +393,23 @@ $(document).ready(function() {
         if (game.in_checkmate()) { title = "Checkmate!"; msg = `${game.turn() === 'w' ? 'Black' : 'White'} wins.`; }
         else { title = "Draw!"; if (game.in_stalemate()) msg = "Draw by Stalemate."; else if (game.in_threefold_repetition()) msg = "Draw by Threefold Repetition."; else if (game.insufficient_material()) msg = "Draw due to Insufficient Material."; else msg = "The game is a draw."; }
         playSound('gameEnd');
+        
+        // **MODIFIED**: Added "Analyze Game" button to the popup.
         Swal.fire({
-            title: title, text: msg, icon: 'info', confirmButtonText: 'Play Again',
+            title: title, text: msg, icon: 'info',
+            showDenyButton: true,
+            confirmButtonText: 'Play Again',
+            denyButtonText: 'Analyze Game',
             customClass: { popup: '!bg-stone-800', title: '!text-white', htmlContainer: '!text-stone-300' }
-        }).then((result) => { if (result.isConfirmed) initGame(); });
+        }).then((result) => {
+            if (result.isConfirmed) {
+                initGame();
+            } else if (result.isDenied) {
+                // Save the game PGN and switch to the analysis page
+                localStorage.setItem('gameToAnalyze', game.pgn());
+                window.location.href = 'analysis.html';
+            }
+        });
     }
     
     // --- Application Entry Point ---
@@ -415,14 +424,9 @@ $(document).ready(function() {
                 const message = event.data;
                 if (message.startsWith('info')) {
                     const scoreMatch = message.match(/score cp (-?\d+)/);
-                    const mateMatch = message.match(/score mate (-?\d+)/);
                     if (scoreMatch) {
                         const scoreInCp = parseInt(scoreMatch[1], 10);
                         const scoreFromWhite = (game.turn() === 'w') ? scoreInCp : -scoreInCp;
-                        updateEvalBar(scoreFromWhite);
-                    } else if (mateMatch) {
-                        const mateIn = parseInt(mateMatch[1], 10);
-                        const scoreFromWhite = (game.turn() === 'w') ? (mateIn > 0 ? 9999 : -9999) : (mateIn > 0 ? -9999 : 9999);
                         updateEvalBar(scoreFromWhite);
                     }
                 }
