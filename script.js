@@ -35,6 +35,9 @@ $(document).ready(function() {
     const liveAnalysisDisplay = $('#live-analysis-display');
     const topEngineMoveElement = $('#top-engine-move');
     const topEngineLineElement = $('#top-engine-line');
+    const mainGameView = $('#main-game');
+    const analysisRoomView = $('#analysis-room');
+    const returnToGameBtn = $('#return-to-game-btn');
 
     // --- Game State ---
     let board = null;
@@ -53,6 +56,7 @@ $(document).ready(function() {
     let reviewMoveIndex = null;
     let isLiveAnalysis = false;
     let engineTimeout = null; // For the AI failsafe
+    let isAnalysisMode = false;
 
     // --- Layout and UI Functions ---
     function syncSidebarHeight() {
@@ -75,6 +79,41 @@ $(document).ready(function() {
         $('.tab-button').removeClass('active');
         $(`#${tabId}-tab`).addClass('active');
         $(`[data-tab="${tabId}"]`).addClass('active');
+    }
+
+    function switchToAnalysisRoom() {
+        isAnalysisMode = true;
+        mainGameView.addClass('hidden');
+        analysisRoomView.removeClass('hidden');
+        
+        // Prepare data for analysis
+        window.gameDataToAnalyze = {
+            pgn: game.pgn(),
+            stockfish: stockfish,
+            history: game.history({ verbose: true })
+        };
+        
+        // Initialize analysis controller
+        if (window.AnalysisController && typeof window.AnalysisController.init === 'function') {
+            window.AnalysisController.init();
+        } else {
+            console.error('AnalysisController not available');
+            Swal.fire('Error', 'Analysis system not loaded properly.', 'error');
+        }
+    }
+
+    function switchToMainGame() {
+        isAnalysisMode = false;
+        analysisRoomView.addClass('hidden');
+        mainGameView.removeClass('hidden');
+        
+        // Stop any ongoing analysis
+        if (window.AnalysisController && typeof window.AnalysisController.stop === 'function') {
+            window.AnalysisController.stop();
+        }
+        
+        // Re-enable the run analysis button
+        runAnalysisBtn.prop('disabled', false).text('Run Game Review');
     }
 
     // --- Sound Functions ---
@@ -392,7 +431,7 @@ $(document).ready(function() {
         if (game.in_checkmate()) { msg = `Checkmate! ${game.turn() === 'w' ? 'Black' : 'White'} wins.`; }
         else { msg = "Game is a draw."; }
         statusElement.text(msg);
-        playSound('end');
+        playSound('gameEnd');
         runAnalysisBtn.prop('disabled', false).removeClass('hidden');
         showTab('analysis');
     }
@@ -411,6 +450,9 @@ $(document).ready(function() {
         historyLastBtn.on('click', exitReviewMode);
         moveHistoryLog.on('click', '.move-span', function() { reviewMoveIndex = parseInt($(this).data('move-index')); showHistoryPosition(); });
         
+        // Return to game button
+        returnToGameBtn.on('click', switchToMainGame);
+        
         liveAnalysisToggle.on('change', function() {
             isLiveAnalysis = $(this).is(':checked');
             if (isLiveAnalysis) {
@@ -424,14 +466,24 @@ $(document).ready(function() {
             }
         });
 
+        // **FIXED**: Corrected the run analysis button handler
         runAnalysisBtn.on('click', function() {
             if ($(this).prop('disabled')) return;
-            if (typeof runGameReview === 'function') {
-                runGameReview(game.history({ verbose: true }), stockfish);
-                $(this).prop('disabled', true).text('Reviewing...');
-            } else {
-                Swal.fire('Error', 'Game Review feature is not available.', 'error');
+            
+            // Check if game has moves to analyze
+            if (game.history().length === 0) {
+                Swal.fire('Error', 'No moves to analyze. Please play some moves first.', 'error');
+                return;
             }
+            
+            // Check if stockfish is available
+            if (!stockfish) {
+                Swal.fire('Error', 'Chess engine not available. Please refresh and try again.', 'error');
+                return;
+            }
+            
+            // Switch to analysis room
+            switchToAnalysisRoom();
         });
 
         themeSelector.on('change', () => { localStorage.setItem('chessBoardTheme', themeSelector.val()); buildBoard(game.fen()); });
@@ -440,40 +492,59 @@ $(document).ready(function() {
         soundToggle.on('click', () => { isMuted = !isMuted; localStorage.setItem('chessSoundMuted', isMuted); soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png'); soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off'); });
         playerNameElement.on('click', () => { Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' }, inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null }).then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } }); });
 
+        // **ENHANCED**: Better error handling for Stockfish loading
         fetch(APP_CONFIG.STOCKFISH_URL)
-            .then(response => { if (!response.ok) throw new Error('Network response was not ok'); return response.text(); })
+            .then(response => { 
+                if (!response.ok) throw new Error(`Failed to fetch Stockfish: ${response.status} ${response.statusText}`); 
+                return response.text(); 
+            })
             .then(text => {
-                stockfish = new Worker(URL.createObjectURL(new Blob([text], { type: 'application/javascript' })));
-                
-                stockfish.onmessage = event => {
-                    const message = event.data;
-                    if (message.startsWith('bestmove')) {
-                        performMove(message.split(' ')[1]);
-                    } else if (message.startsWith('info depth')) {
-                        const scoreMatch = message.match(/score (cp|mate) (-?\d+)/);
-                        if (scoreMatch) {
-                            let score = parseInt(scoreMatch[2], 10);
-                            if (scoreMatch[1] === 'mate') score = (score > 0 ? 1 : -1) * APP_CONFIG.MATE_SCORE;
-                            if (game.turn() === 'b') score = -score;
-                            updateEvalBar(score);
-                        }
-                        if (isLiveAnalysis && !isStockfishThinking) {
-                            const pvMatch = message.match(/pv (.+)/);
-                            if (pvMatch) {
-                                try {
-                                    const tempGame = new Chess(game.fen());
-                                    const moves = pvMatch[1].split(' ');
-                                    const firstMove = tempGame.move(moves[0], { sloppy: true });
-                                    if (firstMove) {
-                                        topEngineMoveElement.text(firstMove.san);
-                                        const nextMoves = moves.slice(1).map(uci => { const nextMove = tempGame.move(uci, { sloppy: true }); return nextMove ? nextMove.san : ''; }).filter(Boolean).join(' ');
-                                        topEngineLineElement.text(nextMoves);
-                                    }
-                                } catch (e) { /* Catch rare parsing errors */ }
+                try {
+                    stockfish = new Worker(URL.createObjectURL(new Blob([text], { type: 'application/javascript' })));
+                    
+                    stockfish.onmessage = event => {
+                        const message = event.data;
+                        if (message.startsWith('bestmove')) {
+                            performMove(message.split(' ')[1]);
+                        } else if (message.startsWith('info depth')) {
+                            const scoreMatch = message.match(/score (cp|mate) (-?\d+)/);
+                            if (scoreMatch) {
+                                let score = parseInt(scoreMatch[2], 10);
+                                if (scoreMatch[1] === 'mate') score = (score > 0 ? 1 : -1) * APP_CONFIG.MATE_SCORE;
+                                if (game.turn() === 'b') score = -score;
+                                updateEvalBar(score);
+                            }
+                            if (isLiveAnalysis && !isStockfishThinking) {
+                                const pvMatch = message.match(/pv (.+)/);
+                                if (pvMatch) {
+                                    try {
+                                        const tempGame = new Chess(game.fen());
+                                        const moves = pvMatch[1].split(' ');
+                                        const firstMove = tempGame.move(moves[0], { sloppy: true });
+                                        if (firstMove) {
+                                            topEngineMoveElement.text(firstMove.san);
+                                            const nextMoves = moves.slice(1).map(uci => { const nextMove = tempGame.move(uci, { sloppy: true }); return nextMove ? nextMove.san : ''; }).filter(Boolean).join(' ');
+                                            topEngineLineElement.text(nextMoves);
+                                        }
+                                    } catch (e) { /* Catch rare parsing errors */ }
+                                }
                             }
                         }
-                    }
-                };
+                    };
+                    
+                    stockfish.onerror = (error) => {
+                        console.error('Stockfish Worker Error:', error);
+                        Swal.fire('Engine Error', 'Chess engine encountered an error. Some features may not work.', 'warning');
+                    };
+                    
+                    // Initialize Stockfish
+                    stockfish.postMessage('uci');
+                    stockfish.postMessage('isready');
+                    
+                } catch (workerError) {
+                    console.error('Failed to create Stockfish worker:', workerError);
+                    throw workerError;
+                }
                 
                 THEMES.forEach(theme => themeSelector.append($('<option>', { value: theme.name, text: theme.displayName })));
                 Object.keys(PIECE_THEMES).forEach(themeName => pieceThemeSelector.append($('<option>', { value: themeName, text: themeName.charAt(0).toUpperCase() + themeName.slice(1) })));
@@ -491,8 +562,18 @@ $(document).ready(function() {
 
                 initGame();
             })
-            .catch(() => {
-                $('aside').html(`<div class="text-red-400 font-bold text-center p-4">CRITICAL ERROR:<br>Could not load stockfish.js.<br><br>Please run from a local server.</div>`);
+            .catch((error) => {
+                console.error('Failed to load Stockfish:', error);
+                $('aside').html(`<div class="text-red-400 font-bold text-center p-4">CRITICAL ERROR:<br>Could not load chess engine.<br><br>Please check your internet connection<br>and refresh the page.</div>`);
+                Swal.fire({
+                    title: 'Engine Loading Failed',
+                    text: 'Could not load the chess engine. Please check your internet connection and refresh the page.',
+                    icon: 'error',
+                    confirmButtonText: 'Refresh Page',
+                    allowOutsideClick: false
+                }).then(() => {
+                    window.location.reload();
+                });
             });
 
         boardElement.on('contextmenu', e => { e.preventDefault(); if (pendingPremove) { pendingPremove = null; removePremoveHighlight(); } });
