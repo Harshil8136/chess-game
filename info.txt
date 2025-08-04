@@ -1,0 +1,77 @@
+You are assisting me with improving and updating my project code. Before doing anything, follow these instructions carefully:
+Directory Check: Review the entire directory and specifically read the RULES LIST. These rules must be followed consistently in all code you generate.
+Reference Repo: Refer to my GitHub repository:
+👉 https://github.com/Harshil8136/chess-game.git
+
+Code Files: I will provide code from four files. Read and understand all of them before making any changes. Do not generate or modify any code until I explicitly instruct you to do so.
+
+Update Instructions:
+When I request an update to a specific file, you must return the entire, fully updated file, including existing code and the new changes.
+Only update one file at a time.
+After updating a file, clearly tell me which other files (if any) will also require updates due to dependencies or related logic.
+NO ASSUMPTIONS: Do not assume or auto-correct anything outside what I ask. Wait for my instructions at each step.
+
+
+
+
+Here is the hierarchical directory structure of your project based on the file paths in your code.
+/ (root directory)
+├── index.html
+├── script.js
+├── analysis.js
+├── config.js
+│
+├── img/
+│   └── (This folder contains all piece image sets referenced in config.js)
+│
+├── icon/
+│   ├── arrow-uturn-left.png
+│   ├── backward.png
+│   ├── chevron-left.png
+│   ├── chevron-right.png
+│   ├── forward.png
+│   ├── speaker-wave.png
+│   └── speaker-x-mark.png
+│
+└── sounds/
+    ├── capture.mp3
+    ├── castle.mp3
+    ├── game-end.mp3
+    ├── game-start.mp3
+    ├── move-check.mp3
+    ├── move-self.mp3
+    └── promote.mp3
+
+
+RULES LIST: Chess Application Quality Standards
+This document defines the core quality standards and operational constraints for the chess application. All development must adhere to these rules.
+
+1. Engine and Logic
+1.1. AI Responsiveness: The AI engine must never freeze, hang, or enter an unrecoverable state. It must always produce a legal move promptly according to its difficulty setting.
+1.2. Chess Rule Integrity: The application must flawlessly enforce all rules of chess, including special moves (castling, en passant, promotion) and all draw conditions (stalemate, threefold repetition, etc.).
+1.3. Reliable Startup: The AI engine must load reliably every time. The application must be self-contained and function correctly when opened directly as a file.
+
+2. Visuals and Board State
+2.1. Perfect Synchronization: The visual board must always be an exact mirror of the logical game state. There will be no desynchronized or ghost pieces.
+2.2. Glitch-Free Interface: The UI must be free of flickering, element resizing, or graphical errors during moves, animations, and window resizing.
+
+3. User Interaction
+3.1. Seamless Controls: Drag-and-drop and click-to-move must work together intuitively.
+3.2. Clear Highlighting: Selecting a piece must instantly and accurately highlight all legal moves. Highlights must reliably disappear after an action is completed or canceled.
+3.3. Reliable Premove: Players must be able to input a move during the AI's turn using both drag and click methods. The premove must be clearly indicated and executed correctly.
+3.4. Intuitive Cancellation: Players must have a simple way to cancel an action, such as right-clicking or clicking away from the board.
+
+4. UI State and Feedback
+
+4.1. Distinct Modes: The application must clearly communicate its current state (Live Play, AI Thinking, Analysis Mode, etc.) to the user.
+4.2. Smart Controls: All buttons and controls must be context-aware, disabling themselves when their action is not available.
+4.3. Accurate Status: All informational text (game status, opening names, analysis data) must be accurate and update instantly.
+4.4. Detailed Game Review: The post-game analysis must provide a comprehensive, move-by-move assessment based on a clear hierarchy of classifications (e.g., Brilliant, Best, Blunder).
+
+5. Stability and Data Persistence
+5.1. Error Resilience: The application must handle potential errors gracefully without crashing and provide clear feedback to the user.
+5.2. Persistent Settings: All user preferences (themes, sound, AI difficulty, etc.) must be saved and correctly reloaded between sessions.
+
+6. Development Constraints and Workflow
+6.1. Single File Updates: Always update one file only. Under no circumstances should an update for more than one file be provided at a time. A list of all files that require changes for a given task must be presented first, and then each file will be updated sequentially in separate responses.
+6.2. Environment Limitations: All solutions must be compatible with a highly restrictive user environment. The user only has access to a text editor like Notepad and a web browser. They cannot install software, use a local server, or access the browser's developer console for debugging. All code must be robust enough to function correctly when the index.html file is opened directly from the local filesystem (file:/// protocol).
