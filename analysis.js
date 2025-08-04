@@ -22,6 +22,7 @@ window.AnalysisController = {
     reviewData: [],
     evalChart: null,
     currentMoveIndex: -1,
+    isAnalyzing: false,
 
     // --- Constants ---
     CLASSIFICATION_DATA: {
@@ -36,117 +37,311 @@ window.AnalysisController = {
         'Blunder': { title: 'Blunder', comment: 'A very bad move that could lead to losing the game.', color: 'text-red-600', icon: '??' },
         'Miss': { title: 'Missed Opportunity', comment: 'Your opponent made a mistake, but you missed the best punishment.', color: 'text-purple-400', icon: '...' }
     },
-    REVIEW_DEPTH: 14,
+    REVIEW_DEPTH: 12, // Reduced for better performance
 
     /**
      * Entry point called by script.js to start the analysis mode.
      */
     init: function() {
+        console.log('AnalysisController: Initializing...');
+        
         const gameData = window.gameDataToAnalyze;
-        if (!gameData || !gameData.pgn || !gameData.stockfish) {
-            console.error("AnalysisController: Missing game data from script.js.");
+        if (!gameData) {
+            console.error("AnalysisController: No game data provided.");
+            this.showError("No game data available for analysis.");
             return;
         }
-        this.stockfish = gameData.stockfish;
-        this.analysisGame.load_pgn(gameData.pgn);
-        this.gameHistory = this.analysisGame.history({ verbose: true });
-        this.reviewData = [];
-        this.currentMoveIndex = this.gameHistory.length - 1;
 
-        this.moveListElement = $('#analysis-move-list');
-        this.evalChartCanvas = $('#eval-chart');
-        this.assessmentDetailsElement = $('#move-assessment-details');
-        this.assessmentTitleElement = $('#assessment-title');
-        this.assessmentCommentElement = $('#assessment-comment');
-        this.boardWrapper = $('#analysis-room .board-wrapper');
+        if (!gameData.stockfish) {
+            console.error("AnalysisController: No stockfish engine provided.");
+            this.showError("Chess engine not available for analysis.");
+            return;
+        }
+
+        if (!gameData.pgn || gameData.pgn.trim() === '') {
+            console.error("AnalysisController: No moves to analyze.");
+            this.showError("No moves available for analysis. Play some moves first.");
+            return;
+        }
+
+        try {
+            // Initialize game state
+            this.stockfish = gameData.stockfish;
+            this.analysisGame = new Chess();
+            this.analysisGame.load_pgn(gameData.pgn);
+            this.gameHistory = this.analysisGame.history({ verbose: true });
+            this.reviewData = [];
+            this.currentMoveIndex = this.gameHistory.length - 1;
+            this.isAnalyzing = false;
+
+            // Get UI elements
+            this.moveListElement = $('#analysis-move-list');
+            this.evalChartCanvas = $('#eval-chart');
+            this.assessmentDetailsElement = $('#move-assessment-details');
+            this.assessmentTitleElement = $('#assessment-title');
+            this.assessmentCommentElement = $('#assessment-comment');
+            this.boardWrapper = $('#analysis-room .board-wrapper');
+            
+            // Verify elements exist
+            if (!this.moveListElement.length) {
+                console.error("AnalysisController: analysis-move-list element not found");
+                this.showError("Analysis interface not properly loaded.");
+                return;
+            }
+
+            // Initialize the analysis board
+            this.initializeBoard();
+            
+            // Set up event handlers
+            this.setupEventHandlers();
+            
+            // Start the analysis
+            this.runGameReview();
+            
+            console.log('AnalysisController: Initialization complete');
+            
+        } catch (error) {
+            console.error('AnalysisController: Error during initialization:', error);
+            this.showError("Failed to initialize analysis system.");
+        }
+    },
+
+    initializeBoard: function() {
+        try {
+            const boardConfig = {
+                position: 'start',
+                pieceTheme: PIECE_THEMES[localStorage.getItem('chessPieceTheme') || 'cburnett'],
+                draggable: false,
+                showNotation: false
+            };
+            
+            // Destroy existing board if it exists
+            if (this.analysisBoard && typeof this.analysisBoard.destroy === 'function') {
+                this.analysisBoard.destroy();
+            }
+            
+            // Create new board
+            this.analysisBoard = Chessboard('analysis-board', boardConfig);
+            
+            // Apply current theme
+            this.applyTheme();
+            
+            // Render coordinates
+            this.renderCoordinates();
+            
+            console.log('AnalysisController: Board initialized successfully');
+            
+        } catch (error) {
+            console.error('AnalysisController: Error initializing board:', error);
+            this.showError("Failed to initialize analysis board.");
+        }
+    },
+
+    setupEventHandlers: function() {
+        // Remove any existing handlers first
+        this.moveListElement.off('click');
         
-        const boardConfig = {
-            position: 'start',
-            pieceTheme: PIECE_THEMES[localStorage.getItem('chessPieceTheme') || 'cburnett']
-        };
-        if (this.analysisBoard) { this.analysisBoard.destroy(); }
-        this.analysisBoard = Chessboard('analysis-board', boardConfig);
-        this.applyTheme();
-        this.renderCoordinates();
-
-        this.moveListElement.off('click').on('click', '.analysis-move-item', (e) => {
+        // Add click handler for move navigation
+        this.moveListElement.on('click', '.analysis-move-item', (e) => {
             const moveIndex = parseInt($(e.currentTarget).data('move-index'));
-            this.navigateToMove(moveIndex);
+            if (!isNaN(moveIndex) && moveIndex >= 0 && moveIndex < this.gameHistory.length) {
+                this.navigateToMove(moveIndex);
+            }
         });
+    },
 
-        this.runGameReview();
+    showError: function(message) {
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                title: 'Analysis Error',
+                text: message,
+                icon: 'error',
+                confirmButtonText: 'Return to Game'
+            }).then(() => {
+                // Try to return to main game
+                if (typeof switchToMainGame === 'function') {
+                    switchToMainGame();
+                } else {
+                    $('#return-to-game-btn').click();
+                }
+            });
+        } else {
+            alert('Analysis Error: ' + message);
+        }
     },
 
     stop: function() {
-        if (this.stockfish) this.stockfish.postMessage('stop');
-        if (this.evalChart) {
-            this.evalChart.destroy();
-            this.evalChart = null;
+        console.log('AnalysisController: Stopping analysis...');
+        
+        this.isAnalyzing = false;
+        
+        if (this.stockfish) {
+            try {
+                this.stockfish.postMessage('stop');
+            } catch (error) {
+                console.warn('Failed to stop stockfish:', error);
+            }
         }
+        
+        if (this.evalChart) {
+            try {
+                this.evalChart.destroy();
+                this.evalChart = null;
+            } catch (error) {
+                console.warn('Failed to destroy chart:', error);
+            }
+        }
+        
+        // Clear any ongoing analysis
+        this.reviewData = [];
+        this.currentMoveIndex = -1;
+        
+        console.log('AnalysisController: Stopped successfully');
     },
 
     runGameReview: async function() {
-        const reviewProgressBtn = $('<button class="w-full px-4 py-2 mb-4 bg-blue-700 text-white font-bold rounded-lg" disabled>Starting Review...</button>');
-        $('#return-to-game-btn').hide().parent().prepend(reviewProgressBtn);
-        this.moveListElement.html(''); // Clear previous list
-
-        let tempGame = new Chess();
-        let lastMoveEval = 20; // Start with a slight edge for white
-
-        for (let i = 0; i < this.gameHistory.length; i++) {
-            const move = this.gameHistory[i];
-            reviewProgressBtn.text(`Analyzing ${i + 1}/${this.gameHistory.length}`);
-            
-            const positionEval = await this.getStaticEvaluation(tempGame.fen());
-            
-            tempGame.move(move.san);
-            
-            const a_move_eval = (move.color === 'w') ? positionEval.best : -positionEval.best;
-            const eval_after_move = await this.getStaticEvaluation(tempGame.fen());
-            const b_move_eval = (move.color === 'w') ? eval_after_move.best : -eval_after_move.best;
-
-            const evalLoss = a_move_eval - b_move_eval;
-            const wasOpponentMistake = (move.color === 'w') ? (lastMoveEval < -100) : (lastMoveEval > 100);
-
-            this.reviewData.push({
-                move: move.san,
-                score: b_move_eval,
-                classification: this.classifyMove(evalLoss, tempGame.pgn(), wasOpponentMistake, Math.abs(positionEval.best - positionEval.second) > 200)
-            });
-            lastMoveEval = b_move_eval;
+        console.log('AnalysisController: Starting game review...');
+        
+        if (this.gameHistory.length === 0) {
+            this.showError("No moves to analyze.");
+            return;
         }
 
-        this.renderFinalReview();
-        reviewProgressBtn.remove();
-        $('#return-to-game-btn').show();
+        this.isAnalyzing = true;
+        
+        // Show progress indicator
+        const progressIndicator = $('<div class="text-center p-4 bg-blue-700 text-white rounded-lg mb-4">Starting Analysis...</div>');
+        this.moveListElement.parent().prepend(progressIndicator);
+        
+        try {
+            this.moveListElement.html('<div class="text-center text-gray-400 p-4">Analyzing moves...</div>');
+
+            let tempGame = new Chess();
+            let lastMoveEval = 20; // Start with slight advantage for white
+
+            for (let i = 0; i < this.gameHistory.length && this.isAnalyzing; i++) {
+                const move = this.gameHistory[i];
+                
+                // Update progress
+                progressIndicator.text(`Analyzing move ${i + 1} of ${this.gameHistory.length}...`);
+                
+                // Get evaluation before the move
+                const positionEval = await this.getStaticEvaluation(tempGame.fen());
+                
+                // Make the move
+                tempGame.move(move.san);
+                
+                // Get evaluation after the move
+                const eval_after_move = await this.getStaticEvaluation(tempGame.fen());
+                
+                // Normalize evaluations based on color to move
+                const a_move_eval = (move.color === 'w') ? positionEval.best : -positionEval.best;
+                const b_move_eval = (move.color === 'w') ? eval_after_move.best : -eval_after_move.best;
+
+                const evalLoss = a_move_eval - b_move_eval;
+                const wasOpponentMistake = (move.color === 'w') ? (lastMoveEval < -100) : (lastMoveEval > 100);
+
+                this.reviewData.push({
+                    move: move.san,
+                    score: b_move_eval,
+                    classification: this.classifyMove(evalLoss, tempGame.pgn(), wasOpponentMistake, Math.abs(positionEval.best - positionEval.second) > 200)
+                });
+                
+                lastMoveEval = b_move_eval;
+                
+                // Allow UI to update
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
+            if (this.isAnalyzing) {
+                this.renderFinalReview();
+                progressIndicator.text('Analysis Complete!');
+                setTimeout(() => progressIndicator.fadeOut(), 2000);
+            }
+            
+        } catch (error) {
+            console.error('AnalysisController: Error during analysis:', error);
+            this.showError("Analysis failed. Please try again.");
+        } finally {
+            this.isAnalyzing = false;
+        }
     },
 
     getStaticEvaluation: function(fen) {
         return new Promise((resolve) => {
+            if (!this.stockfish || !this.isAnalyzing) {
+                resolve({ best: 0, second: 0 });
+                return;
+            }
+
             let scores = {};
+            let bestMoveFound = false;
+            
+            const timeout = setTimeout(() => {
+                if (!bestMoveFound) {
+                    this.stockfish.removeEventListener('message', onMessage);
+                    resolve({ best: scores[1] || 0, second: scores[2] || scores[1] || 0 });
+                }
+            }, 3000); // 3 second timeout per position
+
             const onMessage = (event) => {
+                if (!this.isAnalyzing) {
+                    clearTimeout(timeout);
+                    this.stockfish.removeEventListener('message', onMessage);
+                    resolve({ best: 0, second: 0 });
+                    return;
+                }
+
                 const message = event.data;
+                
                 const pvMatch = message.match(/multipv (\d+)/);
                 if (pvMatch) {
                     const pvIndex = parseInt(pvMatch[1]);
                     const scoreMatch = message.match(/score cp (-?\d+)/);
-                    if(scoreMatch) scores[pvIndex] = parseInt(scoreMatch[1]);
+                    if (scoreMatch) {
+                        scores[pvIndex] = parseInt(scoreMatch[1]);
+                    }
                 }
+                
                 if (message.startsWith('bestmove')) {
+                    bestMoveFound = true;
+                    clearTimeout(timeout);
                     this.stockfish.removeEventListener('message', onMessage);
-                    this.stockfish.postMessage('setoption name MultiPV value 1'); // Reset
-                    resolve({ best: scores[1] || 0, second: scores[2] || scores[1] || 0 });
+                    
+                    // Reset MultiPV
+                    try {
+                        this.stockfish.postMessage('setoption name MultiPV value 1');
+                    } catch (error) {
+                        console.warn('Failed to reset MultiPV:', error);
+                    }
+                    
+                    resolve({ 
+                        best: scores[1] || 0, 
+                        second: scores[2] || scores[1] || 0 
+                    });
                 }
             };
-            this.stockfish.addEventListener('message', onMessage);
-            this.stockfish.postMessage('setoption name MultiPV value 2');
-            this.stockfish.postMessage(`position fen ${fen}`);
-            this.stockfish.postMessage(`go depth ${this.REVIEW_DEPTH}`);
+
+            try {
+                this.stockfish.addEventListener('message', onMessage);
+                this.stockfish.postMessage('setoption name MultiPV value 2');
+                this.stockfish.postMessage(`position fen ${fen}`);
+                this.stockfish.postMessage(`go depth ${this.REVIEW_DEPTH}`);
+            } catch (error) {
+                clearTimeout(timeout);
+                console.error('Error sending commands to stockfish:', error);
+                resolve({ best: 0, second: 0 });
+            }
         });
     },
     
     classifyMove: function(loss, pgn, opponentMadeMistake, isOnlyMove) {
-        if (OPENINGS.some(o => pgn.trim().startsWith(o.pgn))) return 'Book';
+        // Check if it's a book move
+        if (OPENINGS && OPENINGS.some && OPENINGS.some(o => pgn.trim().startsWith(o.pgn))) {
+            return 'Book';
+        }
+        
+        // Classify based on evaluation loss
         if (loss < -200 && opponentMadeMistake) return 'Miss';
         if (loss > 300) return 'Blunder';
         if (loss > 120) return 'Mistake';
@@ -158,34 +353,53 @@ window.AnalysisController = {
     },
 
     renderFinalReview: function() {
-        this.renderReviewedMoveList();
-        this.drawEvalChart();
-        this.navigateToMove(this.gameHistory.length - 1);
+        if (!this.isAnalyzing) return;
+        
+        try {
+            this.renderReviewedMoveList();
+            this.drawEvalChart();
+            this.navigateToMove(this.gameHistory.length - 1);
+            console.log('AnalysisController: Final review rendered successfully');
+        } catch (error) {
+            console.error('AnalysisController: Error rendering final review:', error);
+        }
     },
     
     navigateToMove: function(moveIndex) {
-        if(moveIndex < 0 || moveIndex >= this.gameHistory.length) return;
-        this.currentMoveIndex = moveIndex;
+        if (moveIndex < 0 || moveIndex >= this.gameHistory.length) return;
         
-        const tempGame = new Chess();
-        for (let i = 0; i <= moveIndex; i++) {
-            tempGame.move(this.gameHistory[i].san);
+        try {
+            this.currentMoveIndex = moveIndex;
+            
+            // Update board position
+            const tempGame = new Chess();
+            for (let i = 0; i <= moveIndex; i++) {
+                tempGame.move(this.gameHistory[i].san);
+            }
+            
+            if (this.analysisBoard && typeof this.analysisBoard.position === 'function') {
+                this.analysisBoard.position(tempGame.fen());
+            }
+            
+            // Update move list highlighting
+            this.moveListElement.find('.current-move-analysis').removeClass('current-move-analysis');
+            this.moveListElement.find(`[data-move-index="${moveIndex}"]`).addClass('current-move-analysis');
+            
+            // Show move assessment
+            this.showMoveAssessmentDetails(moveIndex);
+            
+        } catch (error) {
+            console.error('Error navigating to move:', error);
         }
-        this.analysisBoard.position(tempGame.fen());
-        
-        this.moveListElement.find('.current-move-analysis').removeClass('current-move-analysis');
-        this.moveListElement.find(`[data-move-index="${moveIndex}"]`).addClass('current-move-analysis');
-        
-        this.showMoveAssessmentDetails(moveIndex);
     },
 
     showMoveAssessmentDetails: function(moveIndex) {
         const data = this.reviewData[moveIndex];
-        if (!data) return;
+        if (!data || !this.assessmentDetailsElement) return;
         
         const info = this.CLASSIFICATION_DATA[data.classification];
 
-        if (info) {
+        if (info && this.assessmentTitleElement && this.assessmentCommentElement) {
             this.assessmentTitleElement.text(info.title).attr('class', `text-lg font-bold ${info.color}`);
             this.assessmentCommentElement.text(info.comment);
             this.assessmentDetailsElement.removeClass('hidden');
@@ -193,68 +407,143 @@ window.AnalysisController = {
     },
     
     renderReviewedMoveList: function() {
+        if (!this.moveListElement) return;
+        
         let html = '';
         for (let i = 0; i < this.gameHistory.length; i++) {
             const moveNum = Math.floor(i / 2) + 1;
             const move = this.gameHistory[i];
             const review = this.reviewData[i];
+            
+            if (!review) continue;
+            
             const info = this.CLASSIFICATION_DATA[review.classification];
             
-            html += `<div class="analysis-move-item flex items-center gap-3 p-2 rounded-md" data-move-index="${i}" title="${info.title}">`;
+            html += `<div class="analysis-move-item flex items-center gap-3 p-2 rounded-md hover:bg-stone-600 cursor-pointer" data-move-index="${i}" title="${info.title}">`;
+            
             if (move.color === 'w') {
                 html += `<span class="w-8 text-right font-bold text-gray-400">${moveNum}.</span>`;
             } else {
-                html += `<span class="w-8"></span>`; // Placeholder for black's move number
+                html += `<span class="w-8"></span>`;
             }
-            html += `<span class="flex-grow">${move.san}</span>`;
-            html += `<span class="font-bold text-lg w-6 text-center ${info.color}">${info.icon}</span></div>`;
+            
+            html += `<span class="flex-grow font-mono">${move.san}</span>`;
+            html += `<span class="font-bold text-lg w-6 text-center ${info.color}">${info.icon}</span>`;
+            html += `</div>`;
         }
+        
         this.moveListElement.html(html);
     },
 
     drawEvalChart: function() {
-        if (this.evalChart) this.evalChart.destroy();
-        const labels = ['Start'];
-        const data = [20]; // Starting eval is slightly > 0 for white
-        this.reviewData.forEach((item, index) => {
-            labels.push(`${Math.floor(index / 2) + 1}${index % 2 === 0 ? '.' : '...'} ${item.move}`);
-            data.push(item.score);
-        });
-
-        this.evalChart = new Chart(this.evalChartCanvas, {
-            type: 'line',
-            data: { labels: labels, datasets: [{
-                    label: 'Advantage (Centipawns)', data: data,
-                    borderColor: 'rgba(255, 255, 255, 0.7)',
-                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                    fill: true, borderWidth: 2, pointRadius: 1, tension: 0.1
-                }]
-            },
-            options: {
-                scales: {
-                    y: { suggestedMin: -500, suggestedMax: 500, title: { display: false }, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#9e9c99', callback: value => (value/100).toFixed(1) } },
-                    x: { display: false }
-                },
-                plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
-                responsive: true,
-                maintainAspectRatio: false
+        if (!this.evalChartCanvas || !this.evalChartCanvas.length) return;
+        
+        try {
+            if (this.evalChart) {
+                this.evalChart.destroy();
+                this.evalChart = null;
             }
-        });
+
+            const labels = ['Start'];
+            const data = [20]; // Starting eval slightly favors white
+            
+            this.reviewData.forEach((item, index) => {
+                const moveNum = Math.floor(index / 2) + 1;
+                const isWhite = index % 2 === 0;
+                labels.push(`${moveNum}${isWhite ? '.' : '...'} ${item.move}`);
+                data.push(item.score);
+            });
+
+            const ctx = this.evalChartCanvas[0].getContext('2d');
+            
+            this.evalChart = new Chart(ctx, {
+                type: 'line',
+                data: { 
+                    labels: labels, 
+                    datasets: [{
+                        label: 'Position Evaluation',
+                        data: data,
+                        borderColor: 'rgba(59, 130, 246, 0.8)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { 
+                            suggestedMin: -500, 
+                            suggestedMax: 500,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { 
+                                color: '#9e9c99',
+                                callback: function(value) {
+                                    return (value / 100).toFixed(1);
+                                }
+                            }
+                        },
+                        x: { 
+                            display: false 
+                        }
+                    },
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: { 
+                            mode: 'index', 
+                            intersect: false,
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleColor: 'white',
+                            bodyColor: 'white'
+                        }
+                    },
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                }
+            });
+            
+        } catch (error) {
+            console.error('Error creating evaluation chart:', error);
+        }
     },
     
     applyTheme: function() {
-        const themeName = localStorage.getItem('chessBoardTheme') || 'green';
-        const selectedTheme = THEMES.find(t => t.name === themeName) || THEMES[0];
-        document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
-        document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
+        try {
+            const themeName = localStorage.getItem('chessBoardTheme') || 'green';
+            const selectedTheme = THEMES && THEMES.find ? THEMES.find(t => t.name === themeName) : null;
+            
+            if (selectedTheme) {
+                document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
+                document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
+            }
+        } catch (error) {
+            console.warn('Error applying theme:', error);
+        }
     },
 
     renderCoordinates: function() {
-        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-        const ranks = ['1', '2', '3', '4', '5', '6', '7', '8'];
-        this.boardWrapper.find('#analysis-top-files').html(files.map(f => `<span>${f}</span>`).join(''));
-        this.boardWrapper.find('#analysis-bottom-files').html(files.map(f => `<span>${f}</span>`).join(''));
-        this.boardWrapper.find('#analysis-left-ranks').html(ranks.slice().reverse().map(r => `<span>${r}</span>`).join(''));
-        this.boardWrapper.find('#analysis-right-ranks').html(ranks.slice().reverse().map(r => `<span>${r}</span>`).join(''));
+        if (!this.boardWrapper || !this.boardWrapper.length) return;
+        
+        try {
+            const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+            const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+            
+            const filesHtml = files.map(f => `<span>${f}</span>`).join('');
+            const ranksHtml = ranks.map(r => `<span>${r}</span>`).join('');
+            
+            this.boardWrapper.find('#analysis-top-files').html(filesHtml);
+            this.boardWrapper.find('#analysis-bottom-files').html(filesHtml);
+            this.boardWrapper.find('#analysis-left-ranks').html(ranksHtml);
+            this.boardWrapper.find('#analysis-right-ranks').html(ranksHtml);
+            
+        } catch (error) {
+            console.warn('Error rendering coordinates:', error);
+        }
     }
 };
