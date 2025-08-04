@@ -38,16 +38,28 @@
         .control-btn:hover, .history-nav-btn:hover { background-color: rgba(255,255,255,0.2); }
         .control-btn:disabled, .history-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .control-btn img, .history-nav-btn img { width: 20px; height: 20px; filter: invert(0.9); }
-        .move-span { padding: 2px 4px; }
-        .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; border-radius: 3px; }
-        .highlight-move { background-color: rgba(255, 193, 7, 0.3); border-radius: 3px; }
-        .move-history-log { flex-grow: 1; overflow-y: auto; }
-        .analysis-move-item { cursor: pointer; transition: background-color 0.2s; padding: 4px 8px; border-radius: 4px; }
+        .move-span { padding: 2px 4px; border-radius: 3px; } /* **MODIFIED**: Added border-radius */
+        .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; }
+        .highlight-move { background-color: rgba(255, 193, 7, 0.3); }
+        .analysis-move-item { cursor: pointer; transition: background-color 0.2s; padding: 2px 8px; border-radius: 4px; } /* **MODIFIED**: Reduced vertical padding */
         .analysis-move-item:hover { background-color: #504d49; }
         .current-move-analysis { background-color: #5a83b4 !important; color: white; }
         .premove-highlight { background-color: rgba(255, 165, 0, 0.7) !important; }
         #live-analysis-display { background-color: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px; }
         .hidden { display: none !important; }
+        
+        /* **MODIFIED**: Styles for new log box */
+        #log-box-content .log-message { border-bottom: 1px solid #44403c; padding: 2px 0; }
+        #log-box-content .log-error { color: #f87171; }
+        #log-box-content .log-warn { color: #facc15; }
+
+        /* **NEW**: Styles for move history grid layout */
+        .move-history-grid {
+            display: grid;
+            grid-template-columns: 2.5rem 1fr 1fr;
+            gap: 4px 8px;
+            align-items: center;
+        }
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-4 bg-stone-900">
@@ -73,7 +85,7 @@
             </main>
         </div>
 
-        <aside class="w-full lg:w-96 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
+        <aside class="w-full lg:w-80 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
             <section class="text-center pb-4 border-b border-stone-700">
                 <div class="flex justify-between items-center mb-2">
                     <h1 id="game-status" class="text-2xl font-bold h-8 text-left flex-grow">White's Turn</h1>
@@ -98,7 +110,7 @@
                 <button data-tab="analysis" class="tab-button flex-1 p-2 text-base font-bold">Analysis</button>
                 <button data-tab="settings" class="tab-button flex-1 p-2 text-base font-bold">Settings</button>
             </nav>
-            <div class="flex-grow pt-4 overflow-y-auto flex flex-col">
+            <div class="flex-grow pt-4 flex flex-col min-h-0">
                 <div id="moves-tab" class="tab-content active h-full flex-col gap-4">
                     <div class="flex justify-center items-center gap-4">
                         <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
@@ -106,26 +118,33 @@
                         <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
                         <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
                     </div>
-                    <div id="move-history-log" class="move-history-log p-2 bg-stone-800/50 rounded-md"></div>
+                    <div class="p-2 bg-stone-800/50 rounded-md flex-grow flex flex-col min-h-0">
+                        <div class="grid grid-cols-3 gap-x-2 pb-2 border-b border-stone-600 text-center font-bold text-gray-400 flex-shrink-0">
+                            <span>#</span>
+                            <span>White</span>
+                            <span>Black</span>
+                        </div>
+                        <div id="move-history-log" class="flex-grow overflow-y-auto pt-2">
+                            </div>
+                    </div>
                     <div class="grid grid-cols-3 gap-2">
-                         <button id="restart-button" class="w-full px-4 py-2 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors">New Game</button>
-                         <button id="swap-sides-button" class="w-full px-4 py-2 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800 transition-colors">Swap Sides</button>
+                         <button id="restart-button" class="w-full px-4 py-2 bg-blue-700 text-white font-bold rounded-lg shadow-md hover:bg-blue-800 transition-colors">New Game</button>
+                         <button id="swap-sides-button" class="w-full px-4 py-2 bg-stone-600 text-white font-bold rounded-lg shadow-md hover:bg-stone-700 transition-colors">Swap Sides</button>
                          <button id="undo-button" class="w-full px-4 py-2 bg-stone-600 text-white font-bold rounded-lg shadow-md hover:bg-stone-700 flex items-center justify-center gap-2"><img src="icon/arrow-uturn-left.png" alt="Undo" class="w-5 h-5"> Undo</button>
                     </div>
                 </div>
                 
                 <div id="analysis-tab" class="tab-content h-full flex-col gap-4">
-                    <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800">Run Game Review</button>
+                    <div id="game-summary-section" class="p-3 bg-black/20 rounded-md space-y-4 hidden">
+                         <h3 class="text-xl font-bold text-center">Game Summary</h3>
+                         <div id="summary-accuracy" class="flex justify-around text-center"></div>
+                         <div id="summary-move-counts" class="grid grid-cols-3 gap-2 text-center"></div>
+                    </div>
+                    <div class="flex-grow flex items-center justify-center">
+                        <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800">Run Full Game Review</button>
+                    </div>
                     <div id="review-progress-bar" class="w-full bg-gray-700 rounded-full h-2.5 hidden">
                         <div class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
-                    </div>
-                    <div id="move-assessment-details" class="p-3 bg-black/20 rounded-md space-y-1 text-center hidden">
-                        <h4 id="assessment-title" class="text-lg font-bold text-sky-300">Move Assessment</h4>
-                        <p id="assessment-comment" class="text-sm text-gray-300">Details about the move will appear here.</p>
-                    </div>
-                    <div id="analysis-move-list" class="flex-grow overflow-y-auto bg-black/20 rounded-md p-1 space-y-1"></div>
-                    <div class="h-28 flex-shrink-0">
-                        <canvas id="eval-chart" class="w-full h-full"></canvas>
                     </div>
                 </div>
 
@@ -142,6 +161,10 @@
                     <div>
                          <label for="piece-theme-selector" class="font-bold text-lg mb-2 block">Piece Theme</label>
                          <select id="piece-theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-600 border"></select>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <label for="log-box-toggle" class="font-bold text-lg">Show Debug Log</label>
+                        <input type="checkbox" id="log-box-toggle" class="h-5 w-5 rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500">
                     </div>
                 </div>
             </div>
@@ -165,23 +188,48 @@
             </main>
         </div>
 
-        <aside class="w-full lg:w-96 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
+        <aside class="w-full lg:w-80 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
             <section class="text-center pb-4 border-b border-stone-700">
                 <h1 class="text-2xl font-bold">Analysis Room</h1>
                 <p class="text-sm text-stone-400 mt-2">Review your game move by move</p>
             </section>
             
-            <div class="flex-grow pt-4 overflow-y-auto flex flex-col gap-4">
-                <div id="ar-move-assessment-details" class="p-3 bg-black/20 rounded-md space-y-1 text-center hidden">
+            <div class="flex-grow pt-4 flex flex-col min-h-0 gap-4">
+                <div id="review-summary-container" class="p-3 bg-black/20 rounded-md space-y-3 text-sm hidden flex-shrink-0">
+                    <div class="flex justify-around text-center">
+                        <div>
+                            <div class="font-bold text-white text-lg" id="ar-white-accuracy">--%</div>
+                            <div class="text-gray-400">White Accuracy</div>
+                        </div>
+                        <div>
+                            <div class="font-bold text-white text-lg" id="ar-black-accuracy">--%</div>
+                            <div class="text-gray-400">Black Accuracy</div>
+                        </div>
+                    </div>
+                    <div id="ar-move-counts" class="grid grid-cols-3 gap-x-2 gap-y-1 text-center">
+                        </div>
+                </div>
+
+                <div id="ar-move-assessment-details" class="p-3 bg-black/20 rounded-md space-y-1 text-center hidden flex-shrink-0">
                     <h4 id="ar-assessment-title" class="text-lg font-bold text-sky-300">Move Assessment</h4>
                     <p id="ar-assessment-comment" class="text-sm text-gray-300">Details about the move will appear here.</p>
                 </div>
+                
                 <div id="ar-analysis-move-list" class="flex-grow overflow-y-auto bg-black/20 rounded-md p-1 space-y-1"></div>
+                
                 <div class="h-28 flex-shrink-0">
                     <canvas id="ar-eval-chart" class="w-full h-full"></canvas>
                 </div>
             </div>
         </aside>
+    </div>
+    
+    <div id="log-box-container" class="hidden fixed top-1/4 left-1/4 w-1/2 h-1/2 bg-[#1c1b19] border border-stone-600 rounded-lg shadow-2xl flex flex-col z-50">
+        <div id="log-box-header" class="bg-stone-700 p-2 rounded-t-lg cursor-move flex justify-between items-center">
+            <span class="font-bold text-white">Console Log</span>
+            <button id="log-box-clear" class="text-sm bg-red-700 hover:bg-red-800 text-white px-2 py-1 rounded">Clear</button>
+        </div>
+        <div id="log-box-content" class="p-2 text-sm text-gray-300 font-mono overflow-y-auto flex-grow"></div>
     </div>
     
     <div id="eval-bar" class="fixed left-2 top-1/2 transform -translate-y-1/2 w-6 h-80 bg-gray-800 rounded-full overflow-hidden border border-gray-600 hidden lg:block">
