@@ -74,17 +74,17 @@ window.AnalysisController = {
             this.currentMoveIndex = this.gameHistory.length - 1;
             this.isAnalyzing = false;
 
-            // Get UI elements
-            this.moveListElement = $('#analysis-move-list');
-            this.evalChartCanvas = $('#eval-chart');
-            this.assessmentDetailsElement = $('#move-assessment-details');
-            this.assessmentTitleElement = $('#assessment-title');
-            this.assessmentCommentElement = $('#assessment-comment');
+            // **FIX**: Get UI elements using their new, unique IDs from the Analysis Room.
+            this.moveListElement = $('#ar-analysis-move-list');
+            this.evalChartCanvas = $('#ar-eval-chart');
+            this.assessmentDetailsElement = $('#ar-move-assessment-details');
+            this.assessmentTitleElement = $('#ar-assessment-title');
+            this.assessmentCommentElement = $('#ar-assessment-comment');
             this.boardWrapper = $('#analysis-room .board-wrapper');
             
             // Verify elements exist
             if (!this.moveListElement.length) {
-                console.error("AnalysisController: analysis-move-list element not found");
+                console.error("AnalysisController: ar-analysis-move-list element not found");
                 this.showError("Analysis interface not properly loaded.");
                 return;
             }
