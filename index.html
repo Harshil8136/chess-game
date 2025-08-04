@@ -12,136 +12,204 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
 
     <style>
-        :root { --light-square-color: #eaefd2; --dark-square-color: #769656; }
-        body { font-family: 'Inter', sans-serif; background-color: #262522; }
-        #board { box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
-        #analysis-board { box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+        :root {
+            --light-square-color: #eaefd2;
+            --dark-square-color: #769656;
+            --bg-main: #262522;
+            --bg-panel: #312e2b;
+            --bg-inset: rgba(0,0,0,0.2);
+            --bg-inset-deep: rgba(0,0,0,0.5);
+            --text-light: #f5f5f4;
+            --text-dark: #a8a29e;
+            --text-accent: #5a83b4;
+            --border: #57534e;
+            --btn-primary-bg: #2563eb;
+            --btn-primary-hover: #1d4ed8;
+            --btn-secondary-bg: #57534e;
+            --btn-secondary-hover: #44403c;
+        }
+
+        /** MODIFIED **/
+        /* Prevents the main page from scrolling on larger screens */
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-main);
+            color: var(--text-light);
+            overflow: auto; /* Allow body to scroll on small screens */
+        }
+        aside { background-color: var(--bg-panel); }
+        .header-footer, #live-analysis-display { background-color: var(--bg-inset); }
+        .captured-pieces-container, .move-history-container, #ar-analysis-move-list, .bg-inset { background-color: var(--bg-inset); }
+        .themed-border { border-color: var(--border); }
+        .text-dark { color: var(--text-dark); }
+        .text-accent { color: var(--text-accent); }
+        .btn-primary { background-color: var(--btn-primary-bg); color: var(--text-light); transition: background-color 0.2s; }
+        .btn-primary:hover { background-color: var(--btn-primary-hover); }
+        .btn-secondary { background-color: var(--btn-secondary-bg); color: var(--text-light); transition: background-color 0.2s; }
+        .btn-secondary:hover { background-color: var(--btn-secondary-hover); }
+        .themed-select { background-color: var(--btn-secondary-bg); border-color: var(--border); }
+        .tab-button { color: var(--text-dark); border-bottom: 3px solid transparent; }
+        .tab-button.active { color: var(--text-light); border-bottom-color: var(--border); }
+        .current-move-analysis { background-color: var(--text-accent) !important; color: var(--text-light); }
+        .top-action-btn { padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.875rem; }
+        .top-action-icon-btn { background-color: rgba(255,255,255,0.1); border-radius: 6px; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+        .top-action-icon-btn:hover { background-color: rgba(255,255,255,0.2); }
+        .top-action-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .top-action-icon-btn img { width: 20px; height: 20px; filter: invert(0.9); }
+        
+        /** NEW **/
+        /* This ensures squares can contain pseudo-elements for highlighting */
+        div[data-square] {
+            position: relative;
+        }
+        /* This creates the red dot for threatened pieces and ENSURES IT IS NOT CLICKABLE */
+        .threatened-square::after {
+            content: '';
+            position: absolute;
+            top: 10%;
+            right: 10%;
+            width: 15%;
+            height: 15%;
+            border-radius: 50%;
+            background: radial-gradient(rgba(255, 20, 20, 0.8), transparent 70%);
+            pointer-events: none; /* This is the critical fix */
+        }
+        .board-svg-overlay {
+            grid-column: 2;
+            grid-row: 2;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allows clicks to pass through to the board */
+            overflow: visible;
+        }
+        .move-history-grid > span { text-align: center; } /* This helps align moves correctly */
+
+        /* Unchanged utility styles */
+        #board, #analysis-board { box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
         .white-1e1d7 { background-color: var(--light-square-color) !important; }
         .black-3c85d { background-color: var(--dark-square-color) !important; }
         .captured-piece { width: 28px; height: 28px; margin: 2px; }
         .thinking-animation { animation:pulse 1.5s ease-in-out infinite; } @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
         .board-wrapper { display: grid; grid-template-columns: 24px 1fr 24px; grid-template-rows: 24px 1fr 24px; justify-items: center; align-items: center; gap: 4px; }
-        #board { grid-column: 2; grid-row: 2; }
-        #analysis-board { grid-column: 2; grid-row: 2; }
-        .coordinates { color: #9e9c99; font-weight: 600; font-size: 0.8rem; pointer-events: none; user-select: none; }
+        #board, #analysis-board { grid-column: 2; grid-row: 2; }
+        .coordinates { color: var(--text-dark); font-weight: 600; font-size: 0.8rem; pointer-events: none; user-select: none; }
         .files { display: flex; justify-content: space-around; width: 100%; }
         .ranks { display: flex; flex-direction: column; justify-content: space-around; height: 100%; }
-        #top-files { grid-column: 2; grid-row: 1; } #bottom-files { grid-column: 2; grid-row: 3; }
-        #left-ranks { grid-column: 1; grid-row: 2; } #right-ranks { grid-column: 3; grid-row: 2; }
-        #analysis-top-files { grid-column: 2; grid-row: 1; } #analysis-bottom-files { grid-column: 2; grid-row: 3; }
-        #analysis-left-ranks { grid-column: 1; grid-row: 2; } #analysis-right-ranks { grid-column: 3; grid-row: 2; }
-        .tab-button { color: #a8a29e; border-bottom: 3px solid transparent; }
-        .tab-button.active { color: #f5f5f4; border-bottom-color: #78716c; }
+        #top-files, #analysis-top-files { grid-column: 2; grid-row: 1; } #bottom-files, #analysis-bottom-files { grid-column: 2; grid-row: 3; }
+        #left-ranks, #analysis-left-ranks { grid-column: 1; grid-row: 2; } #right-ranks, #analysis-right-ranks { grid-column: 3; grid-row: 2; }
         .tab-content { display: none; }
         .tab-content.active { display: flex; }
-        .control-btn, .history-nav-btn { background-color: rgba(255,255,255,0.1); border-radius: 50%; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
-        .control-btn:hover, .history-nav-btn:hover { background-color: rgba(255,255,255,0.2); }
-        .control-btn:disabled, .history-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .control-btn img, .history-nav-btn img { width: 20px; height: 20px; filter: invert(0.9); }
-        .move-span { padding: 2px 4px; border-radius: 3px; } /* **MODIFIED**: Added border-radius */
+        .history-nav-btn { background-color: rgba(255,255,255,0.1); border-radius: 50%; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+        .history-nav-btn:hover { background-color: rgba(255,255,255,0.2); }
+        .history-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .history-nav-btn img { width: 20px; height: 20px; filter: invert(0.9); }
+        .move-span { padding: 2px 4px; border-radius: 3px; }
         .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; }
         .highlight-move { background-color: rgba(255, 193, 7, 0.3); }
-        .analysis-move-item { cursor: pointer; transition: background-color 0.2s; padding: 2px 8px; border-radius: 4px; } /* **MODIFIED**: Reduced vertical padding */
+        .analysis-move-item { cursor: pointer; transition: background-color 0.2s; padding: 2px 8px; border-radius: 4px; }
         .analysis-move-item:hover { background-color: #504d49; }
-        .current-move-analysis { background-color: #5a83b4 !important; color: white; }
         .premove-highlight { background-color: rgba(255, 165, 0, 0.7) !important; }
-        #live-analysis-display { background-color: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px; }
         .hidden { display: none !important; }
-        
-        /* **MODIFIED**: Styles for new log box */
         #log-box-content .log-message { border-bottom: 1px solid #44403c; padding: 2px 0; }
         #log-box-content .log-error { color: #f87171; }
         #log-box-content .log-warn { color: #facc15; }
-
-        /* **NEW**: Styles for move history grid layout */
-        .move-history-grid {
-            display: grid;
-            grid-template-columns: 2.5rem 1fr 1fr;
-            gap: 4px 8px;
-            align-items: center;
-        }
+        .move-history-grid { display: grid; grid-template-columns: 2.5rem 1fr 1fr; gap: 4px 8px; align-items: center; }
+        ::-webkit-scrollbar { width: 12px; }
+        ::-webkit-scrollbar-track { background: #3c3a37; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background-color: var(--dark-square-color); border-radius: 10px; border: 3px solid #3c3a37; }
+        ::-webkit-scrollbar-thumb:hover { background-color: var(--light-square-color); }
+        .overflow-y-auto { scrollbar-width: thin; scrollbar-color: var(--dark-square-color) #3c3a37; }
     </style>
 </head>
-<body class="flex items-center justify-center min-h-screen p-4 bg-stone-900">
+<body class="p-4">
 
-    <div id="main-game" class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-8">
+    <div id="main-game" class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-4 lg:h-screen lg:py-8">
         <div id="board-area-container" class="w-full lg:flex-1 flex justify-center items-center">
-            <main class="w-full max-w-[720px] flex flex-col gap-2 text-white">
-                <header class="flex justify-between items-center mb-1 p-2 bg-black/20 rounded-md">
+            <main class="w-full max-w-[720px] flex flex-col gap-2">
+                <header class="header-footer flex justify-between items-center mb-1 p-2 rounded-md gap-4">
                     <span id="top-player-name" class="font-bold text-lg">AI (Black)</span>
-                    <div id="captured-by-black" class="flex flex-wrap items-center min-h-[32px] bg-stone-800/50 rounded-md p-1"></div>
-                    <span id="black-advantage" class="font-bold text-green-400"></span>
+                    <div id="captured-by-black" class="captured-pieces-container flex flex-wrap items-center min-h-[32px] rounded-md p-1 flex-grow justify-start"></div>
+                    <span id="black-advantage" class="font-bold text-green-400 flex-shrink-0"></span>
                 </header>
                 <div class="board-wrapper">
                     <div id="top-files" class="coordinates files"></div><div id="left-ranks" class="coordinates ranks"></div>
                     <div id="board" class="w-full aspect-square"></div>
+                    <svg id="board-svg-overlay" class="board-svg-overlay"></svg>
                     <div id="right-ranks" class="coordinates ranks"></div><div id="bottom-files" class="coordinates files"></div>
                 </div>
-                <footer class="flex justify-between items-center mt-1 p-2 bg-black/20 rounded-md">
+                <footer class="header-footer flex justify-between items-center mt-1 p-2 rounded-md gap-4">
                     <span id="bottom-player-name" class="font-bold text-lg">Player (White)</span>
-                    <div id="captured-by-white" class="flex flex-wrap items-center min-h-[32px] bg-stone-800/50 rounded-md p-1"></div>
-                    <span id="white-advantage" class="font-bold text-green-400"></span>
+                    <div id="captured-by-white" class="captured-pieces-container flex flex-wrap items-center min-h-[32px] rounded-md p-1 flex-grow justify-start"></div>
+                    <span id="white-advantage" class="font-bold text-green-400 flex-shrink-0"></span>
                 </footer>
             </main>
         </div>
 
-        <aside class="w-full lg:w-80 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
-            <section class="text-center pb-4 border-b border-stone-700">
-                <div class="flex justify-between items-center mb-2">
-                    <h1 id="game-status" class="text-2xl font-bold h-8 text-left flex-grow">White's Turn</h1>
-                    <div class="flex-shrink-0">
-                        <button id="sound-toggle" class="control-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button>
-                    </div>
+        <aside class="w-full lg:w-80 p-4 rounded-lg flex flex-col">
+            <section class="text-center pb-4 border-b themed-border flex-shrink-0">
+                <div class="flex justify-between items-center">
+                    <h1 id="game-status" class="text-2xl font-bold h-8 text-left">White's Turn</h1>
+                    <p id="opening-name" class="text-sm text-dark h-6 text-right truncate"></p>
                 </div>
-                <p id="opening-name" class="text-sm text-stone-400 h-6 text-left"></p>
-                <div id="live-analysis-display" class="mt-2 text-sm hidden">
-                    <div class="flex items-center gap-2 mb-1">
-                        <input type="checkbox" id="live-analysis-toggle" class="rounded">
-                        <label for="live-analysis-toggle" class="text-white">Live Analysis</label>
-                    </div>
-                    <div class="text-left space-y-1">
-                        <div>Best: <span id="top-engine-move" class="font-mono text-blue-300">...</span></div>
-                        <div>Line: <span id="top-engine-line" class="font-mono text-gray-300 text-xs">...</span></div>
-                    </div>
-                </div>
+                 <div class="flex justify-end items-center gap-2 mt-2">
+                    <button id="hint-button" class="top-action-icon-btn btn-secondary" title="Show Hint">💡</button>
+                    <button id="undo-button" class="top-action-icon-btn btn-secondary" title="Undo"><img src="icon/arrow-uturn-left.png" alt="Undo"></button>
+                    <button id="sound-toggle" class="top-action-icon-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button>
+                    <button id="restart-button" class="top-action-btn btn-primary flex-shrink-0">New Game</button>
+                 </div>
             </section>
-            <nav class="flex border-b border-stone-700">
+            <nav class="flex border-b themed-border flex-shrink-0">
                 <button data-tab="moves" class="tab-button flex-1 p-2 text-base font-bold active">Moves</button>
                 <button data-tab="analysis" class="tab-button flex-1 p-2 text-base font-bold">Analysis</button>
                 <button data-tab="settings" class="tab-button flex-1 p-2 text-base font-bold">Settings</button>
             </nav>
             <div class="flex-grow pt-4 flex flex-col min-h-0">
                 <div id="moves-tab" class="tab-content active h-full flex-col gap-4">
-                    <div class="flex justify-center items-center gap-4">
+                    <div class="flex justify-center items-center gap-4 flex-shrink-0">
                         <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
                         <button id="history-prev" class="history-nav-btn" title="Previous Move"><img src="icon/chevron-left.png" alt="Previous"></button>
                         <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
                         <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
                     </div>
-                    <div class="p-2 bg-stone-800/50 rounded-md flex-grow flex flex-col min-h-0">
-                        <div class="grid grid-cols-3 gap-x-2 pb-2 border-b border-stone-600 text-center font-bold text-gray-400 flex-shrink-0">
+                    <div id="opening-explorer" class="p-2 bg-inset rounded-md hidden flex-shrink-0">
+                        <h4 class="font-bold text-sm text-center border-b themed-border pb-1 mb-1">Opening Explorer</h4>
+                        <div id="opening-explorer-content" class="text-sm text-dark"></div>
+                    </div>
+                    <div class="move-history-container rounded-md flex-grow flex flex-col min-h-0">
+                        <div class="grid grid-cols-3 gap-x-2 p-2 border-b themed-border text-center font-bold text-dark flex-shrink-0">
                             <span>#</span>
                             <span>White</span>
                             <span>Black</span>
                         </div>
-                        <div id="move-history-log" class="flex-grow overflow-y-auto pt-2">
-                            </div>
+                        <div id="move-history-log" class="flex-grow overflow-y-auto p-2"></div>
                     </div>
-                    <div class="grid grid-cols-3 gap-2">
-                         <button id="restart-button" class="w-full px-4 py-2 bg-blue-700 text-white font-bold rounded-lg shadow-md hover:bg-blue-800 transition-colors">New Game</button>
-                         <button id="swap-sides-button" class="w-full px-4 py-2 bg-stone-600 text-white font-bold rounded-lg shadow-md hover:bg-stone-700 transition-colors">Swap Sides</button>
-                         <button id="undo-button" class="w-full px-4 py-2 bg-stone-600 text-white font-bold rounded-lg shadow-md hover:bg-stone-700 flex items-center justify-center gap-2"><img src="icon/arrow-uturn-left.png" alt="Undo" class="w-5 h-5"> Undo</button>
+                    <div class="grid grid-cols-2 gap-2 flex-shrink-0">
+                         <button id="swap-sides-button" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Swap Sides</button>
+                         <button id="export-pgn-btn" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Export PGN</button>
                     </div>
                 </div>
                 
                 <div id="analysis-tab" class="tab-content h-full flex-col gap-4">
-                    <div id="game-summary-section" class="p-3 bg-black/20 rounded-md space-y-4 hidden">
+                    <div id="game-summary-section" class="p-3 bg-inset rounded-md space-y-4 hidden">
                          <h3 class="text-xl font-bold text-center">Game Summary</h3>
-                         <div id="summary-accuracy" class="flex justify-around text-center"></div>
-                         <div id="summary-move-counts" class="grid grid-cols-3 gap-2 text-center"></div>
+                         <div class="text-center">
+                            <p id="summary-opening-name" class="text-sm text-dark">Opening: ---</p>
+                            <p id="summary-final-material" class="text-sm text-dark">Final Material: ---</p>
+                        </div>
+                         <div id="summary-accuracy" class="flex justify-around text-center">
+                            <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
+                            <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
+                         </div>
+                         <div id="summary-move-counts" class="grid grid-cols-3 gap-2 text-center">
+                             <span class="col-span-3 text-sm text-dark italic">Run full review for move breakdown.</span>
+                         </div>
                     </div>
                     <div class="flex-grow flex items-center justify-center">
-                        <button id="run-review-btn" class="w-full px-4 py-3 bg-sky-700 text-white font-bold rounded-lg shadow-md hover:bg-sky-800">Run Full Game Review</button>
+                        <button id="run-review-btn" class="w-full px-4 py-3 font-bold rounded-lg shadow-md btn-primary">Run Full Game Review</button>
                     </div>
                     <div id="review-progress-bar" class="w-full bg-gray-700 rounded-full h-2.5 hidden">
                         <div class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
@@ -149,74 +217,91 @@
                 </div>
 
                 <div id="settings-tab" class="tab-content h-full flex-col gap-6">
-                    <div class="flex justify-between items-center"><span class="font-bold text-lg">Player Name:</span><span id="player-name" class="text-lg text-stone-300 cursor-pointer hover:text-white" title="Click to edit name">Player</span></div>
+                    <div class="flex justify-between items-center"><span class="font-bold text-lg">Player Name:</span><span id="player-name" class="text-lg text-dark cursor-pointer hover:text-light" title="Click to edit name">Player</span></div>
                     <div>
                         <label for="difficulty-slider" class="font-bold text-lg mb-2 block text-center">AI ELO: <span id="elo-display">1200</span></label>
                         <input type="range" id="difficulty-slider" min="1" max="12" value="4" step="1" class="w-full"/>
                     </div>
-                    <div>
-                         <label for="theme-selector" class="font-bold text-lg mb-2 block">Board Theme</label>
-                         <select id="theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-600 border"></select>
+                    <div class="flex justify-between items-center">
+                         <label for="ui-theme-selector" class="font-bold text-lg">UI Theme</label>
+                         <select id="ui-theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
                     </div>
-                    <div>
-                         <label for="piece-theme-selector" class="font-bold text-lg mb-2 block">Piece Theme</label>
-                         <select id="piece-theme-selector" class="w-full p-2 rounded-md bg-stone-700 text-white border-stone-600 border"></select>
+                    <div class="flex justify-between items-center">
+                         <label for="theme-selector" class="font-bold text-lg">Board Theme</label>
+                         <select id="theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
+                    </div>
+                    <div class="flex justify-between items-center">
+                         <label for="piece-theme-selector" class="font-bold text-lg">Piece Theme</label>
+                         <select id="piece-theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <label for="threats-toggle" class="font-bold text-lg">Highlight Threats</label>
+                        <input type="checkbox" id="threats-toggle" class="h-5 w-5 rounded-sm themed-border text-blue-600 focus:ring-blue-500">
                     </div>
                     <div class="flex justify-between items-center">
                         <label for="log-box-toggle" class="font-bold text-lg">Show Debug Log</label>
-                        <input type="checkbox" id="log-box-toggle" class="h-5 w-5 rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <input type="checkbox" id="log-box-toggle" class="h-5 w-5 rounded-sm themed-border text-blue-600 focus:ring-blue-500">
+                    </div>
+                    <div class="pt-2 border-t themed-border">
+                        <label for="fen-input" class="font-bold text-lg mb-2 block">Load Position from FEN</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="fen-input" class="w-full p-2 rounded-md themed-select font-mono text-sm" placeholder="Paste FEN string here...">
+                            <button id="load-fen-btn" class="px-4 font-bold rounded-lg shadow-md btn-primary">Load</button>
+                        </div>
                     </div>
                 </div>
             </div>
         </aside>
     </div>
     
-    <div id="analysis-room" class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-8 hidden">
+    <div id="analysis-room" class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-4 hidden lg:h-screen lg:py-8">
         <div class="w-full lg:flex-1 flex justify-center items-center">
-            <main class="w-full max-w-[720px] flex flex-col gap-2 text-white">
-                <header class="flex justify-center items-center mb-1 p-2 bg-black/20 rounded-md">
+            <main class="w-full max-w-[720px] flex flex-col gap-2">
+                <header class="header-footer flex justify-center items-center mb-1 p-2 rounded-md">
                     <h2 class="font-bold text-xl text-center">Game Analysis</h2>
                 </header>
                 <div class="board-wrapper">
                     <div id="analysis-top-files" class="coordinates files"></div><div id="analysis-left-ranks" class="coordinates ranks"></div>
                     <div id="analysis-board" class="w-full aspect-square"></div>
+                    <svg id="analysis-board-svg-overlay" class="board-svg-overlay"></svg>
                     <div id="analysis-right-ranks" class="coordinates ranks"></div><div id="analysis-bottom-files" class="coordinates files"></div>
                 </div>
-                <footer class="flex justify-center items-center mt-1 p-2 bg-black/20 rounded-md">
-                    <button id="return-to-game-btn" class="px-6 py-2 bg-green-700 text-white font-bold rounded-lg shadow-md hover:bg-green-800 transition-colors">Return to Game</button>
+                <footer class="header-footer flex justify-center items-center mt-1 p-2 rounded-md">
+                    <button id="return-to-game-btn" class="px-6 py-2 rounded-lg shadow-md btn-primary">Return to Game</button>
                 </footer>
             </main>
         </div>
-
-        <aside class="w-full lg:w-80 text-white p-4 rounded-lg bg-[#312e2b] flex flex-col">
-            <section class="text-center pb-4 border-b border-stone-700">
+        <aside class="w-full lg:w-80 p-4 rounded-lg flex flex-col">
+            <section class="text-center pb-4 border-b themed-border flex-shrink-0">
                 <h1 class="text-2xl font-bold">Analysis Room</h1>
-                <p class="text-sm text-stone-400 mt-2">Review your game move by move</p>
+                <p class="text-sm text-dark mt-2">Review your game move by move</p>
             </section>
-            
             <div class="flex-grow pt-4 flex flex-col min-h-0 gap-4">
-                <div id="review-summary-container" class="p-3 bg-black/20 rounded-md space-y-3 text-sm hidden flex-shrink-0">
+                <div id="review-summary-container" class="p-3 bg-inset rounded-md space-y-3 text-sm hidden flex-shrink-0">
                     <div class="flex justify-around text-center">
                         <div>
-                            <div class="font-bold text-white text-lg" id="ar-white-accuracy">--%</div>
-                            <div class="text-gray-400">White Accuracy</div>
+                            <div class="font-bold text-lg" id="ar-white-accuracy">--%</div>
+                            <div class="text-dark">White Accuracy</div>
                         </div>
                         <div>
-                            <div class="font-bold text-white text-lg" id="ar-black-accuracy">--%</div>
-                            <div class="text-gray-400">Black Accuracy</div>
+                            <div class="font-bold text-lg" id="ar-black-accuracy">--%</div>
+                            <div class="text-dark">Black Accuracy</div>
                         </div>
                     </div>
-                    <div id="ar-move-counts" class="grid grid-cols-3 gap-x-2 gap-y-1 text-center">
-                        </div>
+                    <div id="ar-move-counts" class="grid grid-cols-3 gap-x-2 gap-y-1 text-center"></div>
                 </div>
-
-                <div id="ar-move-assessment-details" class="p-3 bg-black/20 rounded-md space-y-1 text-center hidden flex-shrink-0">
-                    <h4 id="ar-assessment-title" class="text-lg font-bold text-sky-300">Move Assessment</h4>
-                    <p id="ar-assessment-comment" class="text-sm text-gray-300">Details about the move will appear here.</p>
+                <div id="ar-move-assessment-details" class="p-3 bg-inset rounded-md space-y-2 text-center hidden flex-shrink-0">
+                    <div class="flex justify-between items-center">
+                        <h4 id="ar-assessment-title" class="text-lg font-bold text-accent">Move Assessment</h4>
+                        <button id="ar-retry-mistake-btn" class="text-xs bg-orange-600 hover:bg-orange-700 px-2 py-1 rounded hidden">Retry</button>
+                    </div>
+                    <p id="ar-assessment-comment" class="text-sm text-dark">Details here.</p>
+                    <div id="ar-best-line-display" class="text-xs text-left text-dark pt-2 border-t themed-border/50 hidden">
+                        <span class="font-bold">Best was:</span> <span id="ar-best-line-moves" class="font-mono"></span>
+                    </div>
                 </div>
-                
-                <div id="ar-analysis-move-list" class="flex-grow overflow-y-auto bg-black/20 rounded-md p-1 space-y-1"></div>
-                
+                <div id="ar-analysis-move-list" class="h-60 overflow-y-auto bg-inset-deep rounded-md p-1 space-y-1 flex-shrink-0"></div>
+                <div class="flex-grow"></div>
                 <div class="h-28 flex-shrink-0">
                     <canvas id="ar-eval-chart" class="w-full h-full"></canvas>
                 </div>
@@ -224,12 +309,15 @@
         </aside>
     </div>
     
-    <div id="log-box-container" class="hidden fixed top-1/4 left-1/4 w-1/2 h-1/2 bg-[#1c1b19] border border-stone-600 rounded-lg shadow-2xl flex flex-col z-50">
-        <div id="log-box-header" class="bg-stone-700 p-2 rounded-t-lg cursor-move flex justify-between items-center">
-            <span class="font-bold text-white">Console Log</span>
-            <button id="log-box-clear" class="text-sm bg-red-700 hover:bg-red-800 text-white px-2 py-1 rounded">Clear</button>
+    <div id="log-box-container" class="hidden fixed top-1/4 left-1/4 w-1/2 h-1/2 border rounded-lg shadow-2xl flex flex-col z-50 bg-panel themed-border">
+        <div id="log-box-header" class="bg-inset p-2 rounded-t-lg cursor-move flex justify-between items-center">
+            <span class="font-bold">Console Log</span>
+            <div class="flex items-center gap-2">
+                <button id="log-box-clear" class="text-xs btn-secondary px-2 py-1 rounded">Clear</button>
+                <button id="log-box-close" class="text-lg font-bold leading-none px-2 rounded hover:bg-red-600" title="Close">&times;</button>
+            </div>
         </div>
-        <div id="log-box-content" class="p-2 text-sm text-gray-300 font-mono overflow-y-auto flex-grow"></div>
+        <div id="log-box-content" class="p-2 text-sm text-dark font-mono overflow-y-auto flex-grow"></div>
     </div>
     
     <div id="eval-bar" class="fixed left-2 top-1/2 transform -translate-y-1/2 w-6 h-80 bg-gray-800 rounded-full overflow-hidden border border-gray-600 hidden lg:block">
