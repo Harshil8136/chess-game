@@ -5,6 +5,7 @@ $(document).ready(function() {
     const openingNameElement = $('#opening-name');
     const themeSelector = $('#theme-selector');
     const pieceThemeSelector = $('#piece-theme-selector');
+    const uiThemeSelector = $('#ui-theme-selector');
     const capturedByWhiteElement = $('#captured-by-white');
     const capturedByBlackElement = $('#captured-by-black');
     const restartButton = $('#restart-button');
@@ -38,12 +39,22 @@ $(document).ready(function() {
     const mainGameView = $('#main-game');
     const analysisRoomView = $('#analysis-room');
     const returnToGameBtn = $('#return-to-game-btn');
-    // **NEW**: Refs for Log Box
     const logBoxToggle = $('#log-box-toggle');
     const logBoxContainer = $('#log-box-container');
     const logBoxHeader = $('#log-box-header');
     const logBoxContent = $('#log-box-content');
     const logBoxClearBtn = $('#log-box-clear');
+    const logBoxCloseBtn = $('#log-box-close');
+    const summaryOpeningName = $('#summary-opening-name');
+    const summaryFinalMaterial = $('#summary-final-material');
+    const hintButton = $('#hint-button');
+    const threatsToggle = $('#threats-toggle');
+    const fenInput = $('#fen-input');
+    const loadFenBtn = $('#load-fen-btn');
+    const exportPgnBtn = $('#export-pgn-btn');
+    const openingExplorer = $('#opening-explorer');
+    const openingExplorerContent = $('#opening-explorer-content');
+    const boardSvgOverlay = $('#board-svg-overlay');
 
     // --- Game State ---
     let board = null;
@@ -61,21 +72,22 @@ $(document).ready(function() {
     let isMuted = false;
     let reviewMoveIndex = null;
     let isLiveAnalysis = false;
-    let engineTimeout = null; // For the AI failsafe
+    let engineTimeout = null;
     let isAnalysisMode = false;
+    let highlightThreats = false;
 
     // --- Layout and UI Functions ---
     function syncSidebarHeight() {
         const boardArea = document.getElementById('board-area-container');
-        const sidebar = document.querySelector('#main-game aside');
-        if (boardArea && sidebar) {
+        const sidebars = document.querySelectorAll('#main-game aside, #analysis-room aside');
+        if (boardArea && sidebars.length) {
             if (window.innerWidth >= 1024) {
                 requestAnimationFrame(() => {
                     const boardHeight = boardArea.offsetHeight;
-                    sidebar.style.height = `${boardHeight}px`;
+                    sidebars.forEach(sidebar => { sidebar.style.height = `${boardHeight}px`; });
                 });
             } else {
-                sidebar.style.height = 'auto';
+                sidebars.forEach(sidebar => { sidebar.style.height = 'auto'; });
             }
         }
     }
@@ -87,17 +99,28 @@ $(document).ready(function() {
         $(`[data-tab="${tabId}"]`).addClass('active');
     }
 
+    function switchToMainGame() {
+        isAnalysisMode = false;
+        analysisRoomView.addClass('hidden');
+        mainGameView.removeClass('hidden');
+        if (window.AnalysisController && typeof window.AnalysisController.stop === 'function') {
+            window.AnalysisController.stop();
+        }
+        if (window.loadFenOnReturn) {
+            initGameFromFen(window.loadFenOnReturn);
+            delete window.loadFenOnReturn;
+        } else {
+            runAnalysisBtn.prop('disabled', game.history().length === 0).text('Run Full Game Review');
+        }
+    }
+
     function switchToAnalysisRoom() {
         isAnalysisMode = true;
         mainGameView.addClass('hidden');
         analysisRoomView.removeClass('hidden');
-        
         window.gameDataToAnalyze = {
-            pgn: game.pgn(),
-            stockfish: stockfish,
-            history: game.history({ verbose: true })
+            pgn: game.pgn(), stockfish: stockfish, history: game.history({ verbose: true })
         };
-        
         if (window.AnalysisController && typeof window.AnalysisController.init === 'function') {
             window.AnalysisController.init();
         } else {
@@ -105,19 +128,7 @@ $(document).ready(function() {
             Swal.fire('Error', 'Analysis system not loaded properly.', 'error');
         }
     }
-
-    function switchToMainGame() {
-        isAnalysisMode = false;
-        analysisRoomView.addClass('hidden');
-        mainGameView.removeClass('hidden');
-        
-        if (window.AnalysisController && typeof window.AnalysisController.stop === 'function') {
-            window.AnalysisController.stop();
-        }
-        
-        runAnalysisBtn.prop('disabled', false).text('Run Full Game Review');
-    }
-
+    
     // --- Sound Functions ---
     function initSounds() {
         Object.keys(SOUND_PATHS).forEach(key => {
@@ -143,7 +154,7 @@ $(document).ready(function() {
         const selectedTheme = THEMES.find(t => t.name === themeSelector.val()) || THEMES[0];
         document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
         document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
-        const config = { position, draggable: true, onDragStart, onDrop, pieceTheme: PIECE_THEMES[pieceThemeSelector.val()], moveSpeed: 'fast' };
+        const config = { position, draggable: true, onDragStart, onDrop, pieceTheme: PIECE_THEMES[pieceThemeSelector.val()], moveSpeed: 200 };
         if (board) board.destroy();
         board = Chessboard('board', config);
         board.orientation(humanPlayer === 'w' ? 'white' : 'black');
@@ -159,14 +170,43 @@ $(document).ready(function() {
         pendingPremove = null;
         pendingMove = null;
         removePremoveHighlight();
+        clearArrows();
         buildBoard('start');
         updatePlayerLabels();
         updateEvalBar(0);
         updateGameState(false);
         playSound('gameStart');
         runAnalysisBtn.prop('disabled', true);
-        $('#game-summary-section').addClass('hidden'); // Hide summary on new game
+        $('#game-summary-section').addClass('hidden');
         liveAnalysisToggle.prop('checked', false).trigger('change');
+        showTab('moves');
+        if (game.turn() === aiPlayer) {
+            setTimeout(makeAiMove, 500);
+        }
+    }
+    
+    function initGameFromFen(fen) {
+        console.log("Initializing game from FEN:", fen);
+        exitReviewMode();
+        if (!game.load(fen)) {
+            console.error("Invalid FEN provided:", fen);
+            Swal.fire('Error', 'The provided FEN string is invalid.', 'error');
+            return;
+        }
+        gameActive = true;
+        isStockfishThinking = false;
+        pendingPremove = null;
+        pendingMove = null;
+        removePremoveHighlight();
+        clearArrows();
+        buildBoard(game.fen());
+        updatePlayerLabels();
+        if (isLiveAnalysis) runLiveAnalysis();
+        else updateEvalBar(0);
+        updateGameState(false);
+        playSound('notify');
+        runAnalysisBtn.prop('disabled', true);
+        $('#game-summary-section').addClass('hidden');
         showTab('moves');
         if (game.turn() === aiPlayer) {
             setTimeout(makeAiMove, 500);
@@ -181,6 +221,8 @@ $(document).ready(function() {
         updateCapturedPieces();
         updateMoveHistoryDisplay();
         updateOpeningName();
+        updateThreatHighlights();
+        updateOpeningExplorer();
         if (isLiveAnalysis && !isStockfishThinking) {
             runLiveAnalysis();
         }
@@ -195,6 +237,7 @@ $(document).ready(function() {
 
     // --- Move Handling ---
     function onDrop(source, target) {
+        clearArrows();
         if (reviewMoveIndex !== null) return;
         if (isStockfishThinking && game.turn() !== humanPlayer) {
             removePremoveHighlight();
@@ -247,20 +290,21 @@ $(document).ready(function() {
         if (!gameActive || game.game_over()) return;
         isStockfishThinking = true;
         statusElement.text("AI is thinking...").addClass('thinking-animation');
-        
         engineTimeout = setTimeout(() => {
             console.error("AI Timeout: Engine did not respond in 20 seconds.");
             isStockfishThinking = false;
             statusElement.text("AI Timeout. Can't move.").removeClass('thinking-animation');
             updateStatus();
         }, 20000);
-
         const difficulty = DIFFICULTY_SETTINGS[aiDifficulty];
-        stockfish.postMessage(`position fen ${game.fen()}`);
+        const fen = game.fen();
+        console.log(`Sending to engine: position fen ${fen}`);
+        stockfish.postMessage(`position fen ${fen}`);
+        let goCommand = '';
         switch (difficulty.type) {
             case 'random':
                 setTimeout(() => performMove(game.moves()[Math.floor(Math.random() * game.moves().length)]), 300);
-                break;
+                return;
             case 'greedy':
                 let bestMove = null;
                 let maxVal = -1;
@@ -271,16 +315,19 @@ $(document).ready(function() {
                 });
                 if (!bestMove) bestMove = game.moves({verbose: true})[Math.floor(Math.random() * game.moves().length)];
                 setTimeout(() => performMove(bestMove.san), 300);
-                break;
+                return;
             case 'stockfish':
-                if (difficulty.depth) stockfish.postMessage(`go depth ${difficulty.depth}`);
-                else if (difficulty.movetime) stockfish.postMessage(`go movetime ${difficulty.movetime}`);
+                if (difficulty.depth) goCommand = `go depth ${difficulty.depth}`;
+                else if (difficulty.movetime) goCommand = `go movetime ${difficulty.movetime}`;
                 break;
         }
+        console.log(`Sending to engine: ${goCommand}`);
+        stockfish.postMessage(goCommand);
     }
 
     function runLiveAnalysis() {
         if (!stockfish || isStockfishThinking || game.game_over()) return;
+        console.log("Starting live analysis.");
         stockfish.postMessage(`position fen ${game.fen()}`);
         stockfish.postMessage('go infinite');
     }
@@ -308,6 +355,7 @@ $(document).ready(function() {
     
     function updateNavButtons() {
         const historyLen = game.history().length;
+        exportPgnBtn.prop('disabled', historyLen === 0);
         if (reviewMoveIndex === null) {
             historyFirstBtn.prop('disabled', historyLen === 0);
             historyPrevBtn.prop('disabled', historyLen === 0);
@@ -355,6 +403,7 @@ $(document).ready(function() {
     function updateStatus() {
         if (reviewMoveIndex !== null) {
             undoButton.prop('disabled', true);
+            hintButton.prop('disabled', true);
             return;
         }
         const turn = game.turn() === 'w' ? 'White' : 'Black';
@@ -363,6 +412,7 @@ $(document).ready(function() {
         if (!isStockfishThinking) statusElement.text(text).removeClass('thinking-animation');
         const isPlayerTurn = game.turn() === humanPlayer && gameActive;
         undoButton.prop('disabled', !isPlayerTurn || game.history().length < 2);
+        hintButton.prop('disabled', !isPlayerTurn);
     }
     
     function updateCapturedPieces() {
@@ -385,34 +435,25 @@ $(document).ready(function() {
         blackAdvantageElement.text(adv < 0 ? `+${-adv}` : '');
     }
 
-    /** MODIFIED **/
-    // This function is rewritten to populate the new static-header grid layout.
     function updateMoveHistoryDisplay() {
         const history = game.history({ verbose: true });
-        const logContainer = $('#move-history-log'); 
-        
-        logContainer.empty().addClass('move-history-grid');
-
+        moveHistoryLog.empty().addClass('move-history-grid');
         for (let i = 0; i < history.length; i += 2) {
             const moveNum = (i / 2) + 1;
             const w_move = history[i];
             const b_move = history[i+1];
-            
             const w_highlight = (reviewMoveIndex === i) ? 'highlight-move' : '';
             const b_highlight = (b_move && reviewMoveIndex === i+1) ? 'highlight-move' : '';
-
-            logContainer.append(`<span class="text-center font-bold text-gray-400">${moveNum}</span>`);
-            logContainer.append(`<span class="move-span ${w_highlight}" data-move-index="${i}">${w_move.san}</span>`);
-            
+            moveHistoryLog.append(`<span class="text-center font-bold text-dark">${moveNum}</span>`);
+            moveHistoryLog.append(`<span class="move-span ${w_highlight}" data-move-index="${i}">${w_move.san}</span>`);
             if (b_move) {
-                logContainer.append(`<span class="move-span ${b_highlight}" data-move-index="${i+1}">${b_move.san}</span>`);
+                moveHistoryLog.append(`<span class="move-span ${b_highlight}" data-move-index="${i+1}">${b_move.san}</span>`);
             } else {
-                logContainer.append(`<span></span>`); // Placeholder
+                moveHistoryLog.append(`<span></span>`);
             }
         }
-        
         if (reviewMoveIndex === null) {
-            logContainer.scrollTop(logContainer[0].scrollHeight);
+            moveHistoryLog.scrollTop(moveHistoryLog[0].scrollHeight);
         }
         updateNavButtons();
     }
@@ -446,12 +487,21 @@ $(document).ready(function() {
         statusElement.text(msg);
         playSound('gameEnd');
         runAnalysisBtn.prop('disabled', false);
-        $('#game-summary-section').removeClass('hidden'); // Show summary section
+        updateGameSummary();
+        $('#game-summary-section').removeClass('hidden');
         showTab('analysis');
     }
+
+    function updateGameSummary() {
+        summaryOpeningName.text(`Opening: ${openingNameElement.text() || 'N/A'}`);
+        const whiteAdv = whiteAdvantageElement.text();
+        const blackAdv = blackAdvantageElement.text();
+        let materialText = "Material: Even";
+        if (whiteAdv) materialText = `Material: ${whiteAdv} for White`;
+        if (blackAdv) materialText = `Material: ${blackAdv} for Black`;
+        summaryFinalMaterial.text(materialText);
+    }
     
-    /** NEW **/
-    // This section initializes and manages the Log Box feature.
     function initLogBox() {
         const originalConsole = { log: console.log, error: console.error, warn: console.warn };
         const logToBox = (message, type) => {
@@ -459,9 +509,7 @@ $(document).ready(function() {
             let formattedMessage = '';
             try {
                 formattedMessage = typeof message === 'object' ? JSON.stringify(message) : message;
-            } catch (e) {
-                formattedMessage = '[[Unserializable Object]]';
-            }
+            } catch (e) { formattedMessage = '[[Unserializable Object]]'; }
             const timestamp = new Date().toLocaleTimeString();
             logBoxContent.append(`<div class="log-message ${type}"><span class="text-gray-500">${timestamp}:</span> ${formattedMessage}</div>`);
             logBoxContent.scrollTop(logBoxContent[0].scrollHeight);
@@ -469,24 +517,106 @@ $(document).ready(function() {
         console.log = function(message) { originalConsole.log.apply(console, arguments); logToBox(message, 'log-info'); };
         console.error = function(message) { originalConsole.error.apply(console, arguments); logToBox(message, 'log-error'); };
         console.warn = function(message) { originalConsole.warn.apply(console, arguments); logToBox(message, 'log-warn'); };
-
-        logBoxToggle.on('change', function() {
-            logBoxContainer.toggleClass('hidden', !this.checked);
-            if (this.checked) console.log("Log box opened.");
-        });
+        logBoxToggle.on('change', function() { logBoxContainer.toggleClass('hidden', !this.checked); if (this.checked) console.log("Log box opened."); });
         logBoxClearBtn.on('click', () => logBoxContent.empty());
-
+        logBoxCloseBtn.on('click', () => logBoxToggle.prop('checked', false).trigger('change'));
         let isDragging = false, offset = { x: 0, y: 0 };
         logBoxHeader.on('mousedown', function(e) {
             isDragging = true;
             let containerOffset = logBoxContainer.offset();
             offset.x = e.clientX - containerOffset.left;
             offset.y = e.clientY - containerOffset.top;
-            $(document).on('mousemove.logbox', e => {
-                if (isDragging) logBoxContainer.css({ top: e.clientY - offset.y, left: e.clientX - offset.x });
-            });
+            $(document).on('mousemove.logbox', e => { if (isDragging) logBoxContainer.css({ top: e.clientY - offset.y, left: e.clientX - offset.x }); });
         });
         $(document).on('mouseup', () => { isDragging = false; $(document).off('mousemove.logbox'); });
+    }
+    
+    function applyUiTheme(themeName) {
+        const theme = UI_THEMES.find(t => t.name === themeName);
+        if (!theme) { console.error(`UI Theme "${themeName}" not found.`); return; }
+        for (const [key, value] of Object.entries(theme.colors)) {
+            document.documentElement.style.setProperty(key, value);
+        }
+    }
+    
+    /** NEW **/
+    // This entire section contains the logic for the new features added.
+    function updateThreatHighlights() {
+        boardElement.find('.threatened-square').removeClass('threatened-square');
+        if (!highlightThreats || game.game_over() || reviewMoveIndex !== null) return;
+
+        // Determine whose pieces to check for threats against
+        const threatenedPlayer = game.turn();
+        const attackingPlayer = threatenedPlayer === 'w' ? 'b' : 'w';
+        
+        game.SQUARES.forEach(square => {
+            const piece = game.get(square);
+            // If there's a piece on the square and it belongs to the player whose turn it is
+            if (piece && piece.color === threatenedPlayer) {
+                // Check if any of the opponent's pieces can attack this square
+                if (game.attackers(square, attackingPlayer).length > 0) {
+                     boardElement.find(`[data-square=${square}]`).addClass('threatened-square');
+                }
+            }
+        });
+    }
+
+    function updateOpeningExplorer() {
+        const pgn = game.pgn();
+        if (!pgn || game.history().length > 10) { // Only show for first 5 full moves
+            openingExplorer.addClass('hidden');
+            return;
+        }
+        const currentOpening = OPENINGS.find(o => pgn === o.pgn);
+        if (currentOpening) {
+            openingExplorerContent.text(currentOpening.name);
+            openingExplorer.removeClass('hidden');
+        } else {
+            openingExplorer.addClass('hidden');
+        }
+    }
+
+    function clearArrows(svgOverlay = boardSvgOverlay) {
+        svgOverlay.empty();
+    }
+
+    function drawArrow(from, to, color = 'rgba(42, 122, 42, 0.6)', svgOverlay = boardSvgOverlay) {
+        const boardWidth = boardElement.width();
+        const squareSize = boardWidth / 8;
+        const isFlipped = board.orientation() === 'black';
+        const getCoords = (square) => {
+            let col = square.charCodeAt(0) - 'a'.charCodeAt(0);
+            let row = parseInt(square.charAt(1)) - 1;
+            if (isFlipped) { col = 7 - col; row = 7 - row; }
+            return { x: col * squareSize + squareSize / 2, y: (7 - row) * squareSize + squareSize / 2 };
+        };
+        const fromCoords = getCoords(from);
+        const toCoords = getCoords(to);
+        const markerId = `arrowhead-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
+        if (!svgOverlay.find(`#${markerId}`).length) {
+            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            marker.setAttribute('id', markerId);
+            marker.setAttribute('viewBox', '0 0 10 10');
+            marker.setAttribute('refX', '5');
+            marker.setAttribute('refY', '5');
+            marker.setAttribute('markerWidth', '3.5');
+            marker.setAttribute('markerHeight', '3.5');
+            marker.setAttribute('orient', 'auto-start-reverse');
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+            path.style.fill = color;
+            marker.appendChild(path);
+            svgOverlay.append(marker);
+        }
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', fromCoords.x);
+        line.setAttribute('y1', fromCoords.y);
+        line.setAttribute('x2', toCoords.x);
+        line.setAttribute('y2', toCoords.y);
+        line.style.stroke = color;
+        line.style.strokeWidth = '14px';
+        line.setAttribute('marker-end', `url(#${markerId})`);
+        svgOverlay.append(line);
     }
     
     // --- Application Initialization ---
@@ -498,18 +628,11 @@ $(document).ready(function() {
         restartButton.on('click', initGame);
         swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
         
-        /** MODIFIED **/
-        // Undo button logic is refactored for clarity.
         undoButton.on('click', () => {
             if (undoButton.prop('disabled')) return;
             exitReviewMode();
-            // Undo twice to revert a full turn (player's move and AI's response).
-            // This is safe because the button is only enabled on the player's turn.
-            if (game.history().length >= 2) {
-                game.undo();
-                game.undo();
-                console.log("Performed a two-move undo.");
-            }
+            clearArrows();
+            if (game.history().length >= 2) { game.undo(); game.undo(); }
             updateGameState(true);
         });
         
@@ -521,37 +644,83 @@ $(document).ready(function() {
         
         returnToGameBtn.on('click', switchToMainGame);
         
-        liveAnalysisToggle.on('change', function() {
-            isLiveAnalysis = $(this).is(':checked');
-            if (isLiveAnalysis) {
-                liveAnalysisDisplay.removeClass('hidden');
-                runLiveAnalysis();
-            } else {
-                liveAnalysisDisplay.addClass('hidden');
-                if (stockfish) stockfish.postMessage('stop');
-                topEngineMoveElement.text('...');
-                topEngineLineElement.text('...');
-            }
-        });
-
         runAnalysisBtn.on('click', function() {
             if ($(this).prop('disabled')) return;
-            if (game.history().length === 0) {
-                Swal.fire('Error', 'No moves to analyze. Please play some moves first.', 'error');
-                return;
-            }
-            if (!stockfish) {
-                Swal.fire('Error', 'Chess engine not available. Please refresh and try again.', 'error');
-                return;
-            }
+            if (game.history().length === 0) { Swal.fire('Error', 'No moves to analyze.', 'error'); return; }
+            if (!stockfish) { Swal.fire('Error', 'Chess engine not available.', 'error'); return; }
             switchToAnalysisRoom();
         });
 
+        // --- NEW FEATURE HANDLERS ---
+        hintButton.on('click', function() {
+            if ($(this).prop('disabled')) return;
+            let originalOnMessage = stockfish.onmessage;
+            stockfish.postMessage(`position fen ${game.fen()}`);
+            stockfish.postMessage('go movetime 1000');
+            stockfish.onmessage = event => {
+                try {
+                    const message = event.data;
+                    if (message.startsWith('bestmove')) {
+                        const move = message.split(' ')[1];
+                        const from = move.substring(0, 2);
+                        const to = move.substring(2, 4);
+                        clearArrows();
+                        drawArrow(from, to);
+                        setTimeout(() => clearArrows(), 3000);
+                        stockfish.onmessage = originalOnMessage;
+                    } else if (originalOnMessage) {
+                        originalOnMessage(event);
+                    }
+                } catch(e) {
+                    console.error("Error handling hint:", e);
+                    stockfish.onmessage = originalOnMessage;
+                }
+            };
+        });
+
+        loadFenBtn.on('click', () => {
+            const fen = fenInput.val().trim();
+            if (fen) initGameFromFen(fen);
+            else Swal.fire('Info', 'Please paste a FEN string into the text field.', 'info');
+        });
+        
+        exportPgnBtn.on('click', function() {
+             if ($(this).prop('disabled')) return;
+             const pgn = game.pgn();
+             const blob = new Blob([pgn], { type: 'application/x-chess-pgn' });
+             const url = URL.createObjectURL(blob);
+             const a = document.createElement('a');
+             a.href = url;
+             a.download = `chess-game-${Date.now()}.pgn`;
+             document.body.appendChild(a);
+             a.click();
+             document.body.removeChild(a);
+             URL.revokeObjectURL(url);
+        });
+
+        threatsToggle.on('change', function() {
+            highlightThreats = $(this).is(':checked');
+            localStorage.setItem('chessHighlightThreats', highlightThreats);
+            updateThreatHighlights();
+        });
+        highlightThreats = localStorage.getItem('chessHighlightThreats') === 'true';
+        threatsToggle.prop('checked', highlightThreats);
+        
         themeSelector.on('change', () => { localStorage.setItem('chessBoardTheme', themeSelector.val()); buildBoard(game.fen()); });
         pieceThemeSelector.on('change', () => { localStorage.setItem('chessPieceTheme', pieceThemeSelector.val()); buildBoard(game.fen()); });
         difficultySlider.on('input', e => { aiDifficulty = parseInt(e.target.value, 10); eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200); localStorage.setItem('chessDifficulty', aiDifficulty); });
-        soundToggle.on('click', () => { isMuted = !isMuted; localStorage.setItem('chessSoundMuted', isMuted); soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png'); soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off'); });
+        soundToggle.on('click', () => { isMuted = !isMuted; localStorage.setItem('chessSoundMuted', isMuted); soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png'); });
         playerNameElement.on('click', () => { Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' }, inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null }).then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } }); });
+
+        UI_THEMES.forEach(theme => uiThemeSelector.append($('<option>', { value: theme.name, text: theme.displayName })));
+        const savedUiTheme = localStorage.getItem('chessUiTheme') || 'charcoal';
+        uiThemeSelector.val(savedUiTheme);
+        applyUiTheme(savedUiTheme);
+        uiThemeSelector.on('change', () => {
+            const selectedTheme = uiThemeSelector.val();
+            applyUiTheme(selectedTheme);
+            localStorage.setItem('chessUiTheme', selectedTheme);
+        });
 
         fetch(APP_CONFIG.STOCKFISH_URL)
             .then(response => { 
@@ -561,12 +730,9 @@ $(document).ready(function() {
             .then(text => {
                 try {
                     stockfish = new Worker(URL.createObjectURL(new Blob([text], { type: 'application/javascript' })));
-                    
                     stockfish.onmessage = event => {
                         const message = event.data;
-                        if (!message.startsWith('info depth')) {
-                             console.log(`Stockfish: ${message}`); // Avoid logging noisy info messages
-                        }
+                        if (!message.startsWith('info depth')) console.log(`Stockfish: ${message}`);
                         if (message.startsWith('bestmove')) {
                             performMove(message.split(' ')[1]);
                         } else if (message.startsWith('info depth')) {
@@ -594,15 +760,12 @@ $(document).ready(function() {
                             }
                         }
                     };
-                    
                     stockfish.onerror = (error) => {
                         console.error('Stockfish Worker Error:', error);
-                        Swal.fire('Engine Error', 'Chess engine encountered an error. Some features may not work.', 'warning');
+                        Swal.fire('Engine Error', 'Chess engine encountered an error.', 'warning');
                     };
-                    
                     stockfish.postMessage('uci');
                     stockfish.postMessage('isready');
-                    
                 } catch (workerError) {
                     console.error('Failed to create Stockfish worker:', workerError);
                     throw workerError;
@@ -620,7 +783,6 @@ $(document).ready(function() {
                 eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200);
                 isMuted = localStorage.getItem('chessSoundMuted') === 'true';
                 soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png');
-                soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off');
 
                 initGame();
             })
@@ -629,7 +791,7 @@ $(document).ready(function() {
                 $('aside').html(`<div class="text-red-400 font-bold text-center p-4">CRITICAL ERROR:<br>Could not load chess engine.<br><br>Please check your internet connection<br>and refresh the page.</div>`);
                 Swal.fire({
                     title: 'Engine Loading Failed',
-                    text: 'Could not load the chess engine. Please check your internet connection and refresh the page.',
+                    text: 'Could not load the chess engine.',
                     icon: 'error',
                     confirmButtonText: 'Refresh Page',
                     allowOutsideClick: false
