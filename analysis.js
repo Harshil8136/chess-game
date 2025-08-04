@@ -12,7 +12,7 @@ window.AnalysisController = {
     assessmentTitleElement: null,
     assessmentCommentElement: null,
     analysisBoard: null,
-    analysisBoardElement: null, // **NEW**: jQuery reference to the board element
+    analysisBoardElement: null,
     boardWrapper: null,
     reviewSummaryContainer: null,
     whiteAccuracyElement: null,
@@ -93,7 +93,7 @@ window.AnalysisController = {
             this.bestLineDisplay = $('#ar-best-line-display');
             this.bestLineMoves = $('#ar-best-line-moves');
             this.analysisBoardSvgOverlay = $('#analysis-board-svg-overlay');
-            this.analysisBoardElement = $('#analysis-board'); // **NEW**: Reference to the board div
+            this.analysisBoardElement = $('#analysis-board');
             
             this.initializeBoard();
             this.setupEventHandlers();
@@ -188,35 +188,47 @@ window.AnalysisController = {
         try {
             this.moveListElement.html('<div class="text-center text-gray-400 p-4">Analyzing moves...</div>');
             let tempGame = new Chess();
+            let opponentCpl = 0; // Keep track of the opponent's CPL from the previous move.
 
             for (let i = 0; i < this.gameHistory.length && this.isAnalyzing; i++) {
                 const move = this.gameHistory[i];
                 progressIndicator.text(`Analyzing move ${i + 1} of ${this.gameHistory.length}...`);
                 
                 const positionEval = await this.getStaticEvaluation(tempGame.fen());
+                
+                const evalBeforeMove = (move.color === 'w') ? positionEval.best : -positionEval.best;
+                
                 tempGame.move(move.san);
+                
+                // The evaluation after the move, from the perspective of the player who just moved.
                 const evalAfterMove = await this.getStaticEvaluation(tempGame.fen());
+                const evalAfterFromPlayerPerspective = (move.color === 'w') ? -evalAfterMove.best : evalAfterMove.best;
                 
-                const previousEval = (move.color === 'w') ? positionEval.best : -positionEval.best;
-                const currentEval = (move.color === 'w') ? evalAfterMove.best : -evalAfterMove.best;
-                const evalLoss = previousEval - currentEval;
+                const cpl = Math.max(0, evalBeforeMove - evalAfterFromPlayerPerspective);
                 
-                const classification = this.classifyMove(evalLoss, tempGame.pgn());
+                const bestMoveAdvantage = Math.abs(positionEval.best - positionEval.second);
+                
+                const classification = this.classifyMove(cpl, opponentCpl, bestMoveAdvantage, tempGame.pgn());
+                
                 const player = move.color;
                 if (this.moveCounts[player] && classification in this.moveCounts[player]) {
                     this.moveCounts[player][classification]++;
                 }
-                if (evalLoss > 0) {
-                    this.cpl[player].push(Math.min(evalLoss, 350));
+                
+                // Only add positive CPL to the accuracy calculation.
+                if (cpl > 0) {
+                    this.cpl[player].push(Math.min(cpl, 350));
                 }
 
                 this.reviewData.push({
                     move: move.san,
-                    score: currentEval,
+                    score: -evalAfterMove.best, // Store eval from White's perspective
                     classification: classification,
                     bestLineUci: positionEval.best_pv
                 });
-                await new Promise(resolve => setTimeout(resolve, 50));
+
+                opponentCpl = cpl; // The CPL of this move becomes the opponent's CPL for the next move.
+                await new Promise(resolve => setTimeout(resolve, 50)); // Tiny delay to keep UI responsive
             }
 
             if (this.isAnalyzing) {
@@ -270,8 +282,14 @@ window.AnalysisController = {
                 const pvMatch = message.match(/multipv (\d+) .* pv (.+)/);
                 if (pvMatch) {
                     const pvIndex = parseInt(pvMatch[1]);
-                    const scoreMatch = message.match(/score cp (-?\d+)/);
-                    if (scoreMatch) scores[pvIndex] = parseInt(scoreMatch[1]);
+                    const scoreMatch = message.match(/score (cp|mate) (-?\d+)/);
+                    if (scoreMatch) {
+                        let score = parseInt(scoreMatch[2]);
+                        if (scoreMatch[1] === 'mate') {
+                           score = (score > 0 ? 1 : -1) * APP_CONFIG.MATE_SCORE;
+                        }
+                        scores[pvIndex] = score;
+                    }
                     if (pvIndex === 1) best_pv = pvMatch[2];
                 }
                 if (message.startsWith('bestmove')) {
@@ -279,7 +297,7 @@ window.AnalysisController = {
                     clearTimeout(timeout);
                     this.stockfish.removeEventListener('message', onMessage);
                     try { this.stockfish.postMessage('setoption name MultiPV value 1'); } catch(e) { console.warn(e); }
-                    resolve({ best: scores[1] || 0, second: scores[2] || 0, best_pv });
+                    resolve({ best: scores[1] || 0, second: scores[2] || scores[1] || 0, best_pv });
                 }
             };
 
@@ -296,14 +314,24 @@ window.AnalysisController = {
         });
     },
     
-    classifyMove: function(loss, pgn) {
+    /** MODIFIED **/
+    // This function now uses more context to provide smarter classifications.
+    classifyMove: function(cpl, opponentCpl, bestMoveAdvantage, pgn) {
         if (OPENINGS && OPENINGS.some && OPENINGS.some(o => pgn.trim().startsWith(o.pgn))) return 'Book';
-        if (loss > 300) return 'Blunder';
-        if (loss > 120) return 'Mistake';
-        if (loss > 50) return 'Inaccuracy';
-        if (loss < -200) return 'Miss';
-        if (loss < 10) return 'Best';
-        if (loss < 30) return 'Excellent';
+        
+        // A 'Miss' is when the opponent blundered (high CPL) and we failed to capitalize (also a notable CPL).
+        if (opponentCpl > 150 && cpl > 70) return 'Miss';
+
+        // 'Brilliant' or 'Great' moves are the only good moves in a position (the next best move is much worse).
+        if (cpl < 10 && bestMoveAdvantage > 250) return 'Brilliant';
+        if (cpl < 10 && bestMoveAdvantage > 100) return 'Great';
+        
+        // Standard CPL classification
+        if (cpl >= 300) return 'Blunder';
+        if (cpl >= 120) return 'Mistake';
+        if (cpl >= 50) return 'Inaccuracy';
+        if (cpl < 10) return 'Best';
+        if (cpl < 30) return 'Excellent';
         return 'Good';
     },
 
@@ -311,6 +339,7 @@ window.AnalysisController = {
         const calculate = (cpl_array) => {
             if (cpl_array.length === 0) return 100;
             const avg_cpl = cpl_array.reduce((a, b) => a + b, 0) / cpl_array.length;
+            // This is a standard formula for converting average CPL to a percentage accuracy.
             return Math.round(103.16 * Math.exp(-0.04354 * avg_cpl));
         };
         this.accuracy.w = calculate(this.cpl.w);
@@ -321,7 +350,7 @@ window.AnalysisController = {
         this.whiteAccuracyElement.text(this.accuracy.w + '%');
         this.blackAccuracyElement.text(this.accuracy.b + '%');
         let countsHtml = '';
-        const displayOrder = ['Brilliant', 'Great', 'Best', 'Blunder', 'Mistake', 'Inaccuracy', 'Miss'];
+        const displayOrder = ['Brilliant', 'Great', 'Best', 'Miss', 'Blunder', 'Mistake', 'Inaccuracy'];
         displayOrder.forEach(key => {
             const w_count = this.moveCounts.w[key] || 0;
             const b_count = this.moveCounts.b[key] || 0;
@@ -381,7 +410,7 @@ window.AnalysisController = {
             this.assessmentDetailsElement.removeClass('hidden');
             const isBadMove = data.classification === 'Mistake' || data.classification === 'Blunder';
             this.retryMistakeBtn.toggleClass('hidden', !isBadMove);
-            if (data.bestLineUci) {
+            if (data.bestLineUci && ['Mistake', 'Blunder', 'Inaccuracy', 'Miss'].includes(data.classification)) {
                 const tempGame = new Chess();
                 for(let i=0; i < moveIndex; i++) tempGame.move(this.gameHistory[i].san);
                 const sanLine = this.uciToSanLine(tempGame.fen(), data.bestLineUci);
@@ -437,7 +466,7 @@ window.AnalysisController = {
         try {
             if (this.evalChart) this.evalChart.destroy();
             const labels = ['Start'];
-            const data = [20];
+            const data = [20]; // Standard starting eval
             this.reviewData.forEach((item, index) => {
                 const moveNum = Math.floor(index / 2) + 1;
                 const isWhite = index % 2 === 0;
@@ -450,16 +479,24 @@ window.AnalysisController = {
                 data: { labels, datasets: [{
                     label: 'Position Evaluation', data,
                     borderColor: 'rgba(59, 130, 246, 0.8)',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    fill: true, borderWidth: 2, pointRadius: 2,
-                    pointHoverRadius: 4, tension: 0.1
+                    backgroundColor: (context) => {
+                        const chart = context.chart;
+                        const {ctx, chartArea} = chart;
+                        if (!chartArea) return;
+                        const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                        gradient.addColorStop(0.5, 'rgba(59, 130, 246, 0)');
+                        gradient.addColorStop(0, 'rgba(239, 68, 68, 0.2)');
+                        gradient.addColorStop(1, 'rgba(34, 197, 94, 0.2)');
+                        return gradient;
+                    },
+                    fill: true, borderWidth: 2, pointRadius: 1, pointHoverRadius: 4, tension: 0.1
                 }]},
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     scales: {
                         y: { 
                             suggestedMin: -500, suggestedMax: 500,
-                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            grid: { color: 'rgba(255,255,255,0.1)', zeroLineColor: 'rgba(255,255,255,0.4)' },
                             ticks: { color: 'var(--text-dark)', callback: (v) => (v / 100).toFixed(1) }
                         },
                         x: { display: false }
@@ -505,8 +542,6 @@ window.AnalysisController = {
         }
     },
 
-    /** MODIFIED **/
-    // This drawArrow function is corrected to prevent the error.
     clearArrows: function() {
         if (this.analysisBoardSvgOverlay) {
             this.analysisBoardSvgOverlay.empty();
@@ -516,8 +551,8 @@ window.AnalysisController = {
     drawArrow: function(from, to, color = 'rgba(42, 122, 42, 0.7)') {
         if (!this.analysisBoardSvgOverlay || !this.analysisBoard) return;
         
-        // **FIX**: Correctly get the board width from the jQuery element, not the board instance.
         const boardWidth = this.analysisBoardElement.width();
+        if (!boardWidth || boardWidth === 0) return; // Prevent drawing if board isn't visible
         const squareSize = boardWidth / 8;
         const isFlipped = this.analysisBoard.orientation() === 'black';
 
