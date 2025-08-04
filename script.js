@@ -38,6 +38,12 @@ $(document).ready(function() {
     const mainGameView = $('#main-game');
     const analysisRoomView = $('#analysis-room');
     const returnToGameBtn = $('#return-to-game-btn');
+    // **NEW**: Refs for Log Box
+    const logBoxToggle = $('#log-box-toggle');
+    const logBoxContainer = $('#log-box-container');
+    const logBoxHeader = $('#log-box-header');
+    const logBoxContent = $('#log-box-content');
+    const logBoxClearBtn = $('#log-box-clear');
 
     // --- Game State ---
     let board = null;
@@ -61,7 +67,7 @@ $(document).ready(function() {
     // --- Layout and UI Functions ---
     function syncSidebarHeight() {
         const boardArea = document.getElementById('board-area-container');
-        const sidebar = document.querySelector('aside');
+        const sidebar = document.querySelector('#main-game aside');
         if (boardArea && sidebar) {
             if (window.innerWidth >= 1024) {
                 requestAnimationFrame(() => {
@@ -86,14 +92,12 @@ $(document).ready(function() {
         mainGameView.addClass('hidden');
         analysisRoomView.removeClass('hidden');
         
-        // Prepare data for analysis
         window.gameDataToAnalyze = {
             pgn: game.pgn(),
             stockfish: stockfish,
             history: game.history({ verbose: true })
         };
         
-        // Initialize analysis controller
         if (window.AnalysisController && typeof window.AnalysisController.init === 'function') {
             window.AnalysisController.init();
         } else {
@@ -107,13 +111,11 @@ $(document).ready(function() {
         analysisRoomView.addClass('hidden');
         mainGameView.removeClass('hidden');
         
-        // Stop any ongoing analysis
         if (window.AnalysisController && typeof window.AnalysisController.stop === 'function') {
             window.AnalysisController.stop();
         }
         
-        // Re-enable the run analysis button
-        runAnalysisBtn.prop('disabled', false).text('Run Game Review');
+        runAnalysisBtn.prop('disabled', false).text('Run Full Game Review');
     }
 
     // --- Sound Functions ---
@@ -162,7 +164,8 @@ $(document).ready(function() {
         updateEvalBar(0);
         updateGameState(false);
         playSound('gameStart');
-        runAnalysisBtn.prop('disabled', true).addClass('hidden');
+        runAnalysisBtn.prop('disabled', true);
+        $('#game-summary-section').addClass('hidden'); // Hide summary on new game
         liveAnalysisToggle.prop('checked', false).trigger('change');
         showTab('moves');
         if (game.turn() === aiPlayer) {
@@ -220,7 +223,7 @@ $(document).ready(function() {
     }
     
     function performMove(move) {
-        clearTimeout(engineTimeout); // AI responded, so clear the failsafe
+        clearTimeout(engineTimeout);
         const moveResult = game.move(move, { sloppy: true });
         isStockfishThinking = false;
         if (moveResult) {
@@ -245,12 +248,12 @@ $(document).ready(function() {
         isStockfishThinking = true;
         statusElement.text("AI is thinking...").addClass('thinking-animation');
         
-        // **FIX**: Failsafe to prevent the game from getting stuck permanently.
         engineTimeout = setTimeout(() => {
+            console.error("AI Timeout: Engine did not respond in 20 seconds.");
             isStockfishThinking = false;
-            statusElement.text("AI Timeout. Please move.").removeClass('thinking-animation');
+            statusElement.text("AI Timeout. Can't move.").removeClass('thinking-animation');
             updateStatus();
-        }, 20000); // 20 seconds
+        }, 20000);
 
         const difficulty = DIFFICULTY_SETTINGS[aiDifficulty];
         stockfish.postMessage(`position fen ${game.fen()}`);
@@ -362,7 +365,6 @@ $(document).ready(function() {
         undoButton.prop('disabled', !isPlayerTurn || game.history().length < 2);
     }
     
-    // **FIX**: Moved these functions inside the document.ready scope to fix the move history bug.
     function updateCapturedPieces() {
         const pieceThemePath = PIECE_THEMES[pieceThemeSelector.val()];
         if (!pieceThemePath) return;
@@ -383,23 +385,34 @@ $(document).ready(function() {
         blackAdvantageElement.text(adv < 0 ? `+${-adv}` : '');
     }
 
+    /** MODIFIED **/
+    // This function is rewritten to populate the new static-header grid layout.
     function updateMoveHistoryDisplay() {
         const history = game.history({ verbose: true });
-        let html = '';
+        const logContainer = $('#move-history-log'); 
+        
+        logContainer.empty().addClass('move-history-grid');
+
         for (let i = 0; i < history.length; i += 2) {
             const moveNum = (i / 2) + 1;
             const w_move = history[i];
             const b_move = history[i+1];
+            
             const w_highlight = (reviewMoveIndex === i) ? 'highlight-move' : '';
             const b_highlight = (b_move && reviewMoveIndex === i+1) ? 'highlight-move' : '';
-            html += `<div><span class="font-bold w-6 inline-block">${moveNum}.</span>`;
-            if (w_move) html += `<span class="move-span ${w_highlight}" data-move-index="${i}">${w_move.san}</span> `;
-            if (b_move) html += `<span class="move-span ${b_highlight}" data-move-index="${i+1}">${b_move.san}</span>`;
-            html += `</div>`;
+
+            logContainer.append(`<span class="text-center font-bold text-gray-400">${moveNum}</span>`);
+            logContainer.append(`<span class="move-span ${w_highlight}" data-move-index="${i}">${w_move.san}</span>`);
+            
+            if (b_move) {
+                logContainer.append(`<span class="move-span ${b_highlight}" data-move-index="${i+1}">${b_move.san}</span>`);
+            } else {
+                logContainer.append(`<span></span>`); // Placeholder
+            }
         }
-        moveHistoryLog.html(html);
+        
         if (reviewMoveIndex === null) {
-            moveHistoryLog.scrollTop(moveHistoryLog[0].scrollHeight);
+            logContainer.scrollTop(logContainer[0].scrollHeight);
         }
         updateNavButtons();
     }
@@ -432,25 +445,80 @@ $(document).ready(function() {
         else { msg = "Game is a draw."; }
         statusElement.text(msg);
         playSound('gameEnd');
-        runAnalysisBtn.prop('disabled', false).removeClass('hidden');
+        runAnalysisBtn.prop('disabled', false);
+        $('#game-summary-section').removeClass('hidden'); // Show summary section
         showTab('analysis');
+    }
+    
+    /** NEW **/
+    // This section initializes and manages the Log Box feature.
+    function initLogBox() {
+        const originalConsole = { log: console.log, error: console.error, warn: console.warn };
+        const logToBox = (message, type) => {
+            if (logBoxContainer.is(':hidden')) return;
+            let formattedMessage = '';
+            try {
+                formattedMessage = typeof message === 'object' ? JSON.stringify(message) : message;
+            } catch (e) {
+                formattedMessage = '[[Unserializable Object]]';
+            }
+            const timestamp = new Date().toLocaleTimeString();
+            logBoxContent.append(`<div class="log-message ${type}"><span class="text-gray-500">${timestamp}:</span> ${formattedMessage}</div>`);
+            logBoxContent.scrollTop(logBoxContent[0].scrollHeight);
+        };
+        console.log = function(message) { originalConsole.log.apply(console, arguments); logToBox(message, 'log-info'); };
+        console.error = function(message) { originalConsole.error.apply(console, arguments); logToBox(message, 'log-error'); };
+        console.warn = function(message) { originalConsole.warn.apply(console, arguments); logToBox(message, 'log-warn'); };
+
+        logBoxToggle.on('change', function() {
+            logBoxContainer.toggleClass('hidden', !this.checked);
+            if (this.checked) console.log("Log box opened.");
+        });
+        logBoxClearBtn.on('click', () => logBoxContent.empty());
+
+        let isDragging = false, offset = { x: 0, y: 0 };
+        logBoxHeader.on('mousedown', function(e) {
+            isDragging = true;
+            let containerOffset = logBoxContainer.offset();
+            offset.x = e.clientX - containerOffset.left;
+            offset.y = e.clientY - containerOffset.top;
+            $(document).on('mousemove.logbox', e => {
+                if (isDragging) logBoxContainer.css({ top: e.clientY - offset.y, left: e.clientX - offset.x });
+            });
+        });
+        $(document).on('mouseup', () => { isDragging = false; $(document).off('mousemove.logbox'); });
     }
     
     // --- Application Initialization ---
     function initApp() {
         initSounds();
+        initLogBox();
         
         $('.tab-button').on('click', function() { showTab($(this).data('tab')); });
         restartButton.on('click', initGame);
         swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
-        undoButton.on('click', () => { if (!undoButton.prop('disabled')) { exitReviewMode(); game.undo(); game.undo(); updateGameState(true); } });
+        
+        /** MODIFIED **/
+        // Undo button logic is refactored for clarity.
+        undoButton.on('click', () => {
+            if (undoButton.prop('disabled')) return;
+            exitReviewMode();
+            // Undo twice to revert a full turn (player's move and AI's response).
+            // This is safe because the button is only enabled on the player's turn.
+            if (game.history().length >= 2) {
+                game.undo();
+                game.undo();
+                console.log("Performed a two-move undo.");
+            }
+            updateGameState(true);
+        });
+        
         historyFirstBtn.on('click', () => { if (!historyFirstBtn.prop('disabled')) { reviewMoveIndex = 0; showHistoryPosition(); } });
         historyPrevBtn.on('click', () => { if (!historyPrevBtn.prop('disabled')) { if (reviewMoveIndex === null) reviewMoveIndex = game.history().length - 1; if (reviewMoveIndex > 0) reviewMoveIndex--; showHistoryPosition(); } });
         historyNextBtn.on('click', () => { if (!historyNextBtn.prop('disabled')) { if (reviewMoveIndex === null) return; if (reviewMoveIndex < game.history().length - 1) reviewMoveIndex++; showHistoryPosition(); } });
         historyLastBtn.on('click', exitReviewMode);
         moveHistoryLog.on('click', '.move-span', function() { reviewMoveIndex = parseInt($(this).data('move-index')); showHistoryPosition(); });
         
-        // Return to game button
         returnToGameBtn.on('click', switchToMainGame);
         
         liveAnalysisToggle.on('change', function() {
@@ -466,23 +534,16 @@ $(document).ready(function() {
             }
         });
 
-        // **FIXED**: Corrected the run analysis button handler
         runAnalysisBtn.on('click', function() {
             if ($(this).prop('disabled')) return;
-            
-            // Check if game has moves to analyze
             if (game.history().length === 0) {
                 Swal.fire('Error', 'No moves to analyze. Please play some moves first.', 'error');
                 return;
             }
-            
-            // Check if stockfish is available
             if (!stockfish) {
                 Swal.fire('Error', 'Chess engine not available. Please refresh and try again.', 'error');
                 return;
             }
-            
-            // Switch to analysis room
             switchToAnalysisRoom();
         });
 
@@ -492,7 +553,6 @@ $(document).ready(function() {
         soundToggle.on('click', () => { isMuted = !isMuted; localStorage.setItem('chessSoundMuted', isMuted); soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png'); soundToggle.attr('title', isMuted ? 'Turn Sound On' : 'Turn Sound Off'); });
         playerNameElement.on('click', () => { Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' }, inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null }).then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } }); });
 
-        // **ENHANCED**: Better error handling for Stockfish loading
         fetch(APP_CONFIG.STOCKFISH_URL)
             .then(response => { 
                 if (!response.ok) throw new Error(`Failed to fetch Stockfish: ${response.status} ${response.statusText}`); 
@@ -504,6 +564,9 @@ $(document).ready(function() {
                     
                     stockfish.onmessage = event => {
                         const message = event.data;
+                        if (!message.startsWith('info depth')) {
+                             console.log(`Stockfish: ${message}`); // Avoid logging noisy info messages
+                        }
                         if (message.startsWith('bestmove')) {
                             performMove(message.split(' ')[1]);
                         } else if (message.startsWith('info depth')) {
@@ -526,7 +589,7 @@ $(document).ready(function() {
                                             const nextMoves = moves.slice(1).map(uci => { const nextMove = tempGame.move(uci, { sloppy: true }); return nextMove ? nextMove.san : ''; }).filter(Boolean).join(' ');
                                             topEngineLineElement.text(nextMoves);
                                         }
-                                    } catch (e) { /* Catch rare parsing errors */ }
+                                    } catch (e) { console.warn("Error parsing engine PV line."); }
                                 }
                             }
                         }
@@ -537,7 +600,6 @@ $(document).ready(function() {
                         Swal.fire('Engine Error', 'Chess engine encountered an error. Some features may not work.', 'warning');
                     };
                     
-                    // Initialize Stockfish
                     stockfish.postMessage('uci');
                     stockfish.postMessage('isready');
                     
