@@ -144,7 +144,9 @@ const UI_THEMES = [
 ];
 
 const APP_CONFIG = {
-    STOCKFISH_URL: 'https://cdn.jsdelivr.net/gh/niklasf/stockfish.js/stockfish.js',
+    /** MODIFIED **/
+    // This URL points to a stable, compiled version of the engine, which will fix the loading issue.
+    STOCKFISH_URL: 'https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js',
     DEFAULT_BOARD_THEME: 'green',
     DEFAULT_PIECE_THEME: 'alpha',
     MATE_SCORE: 10000
