@@ -11,8 +11,135 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
 
-    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --light-square-color: #eaefd2;
+            --dark-square-color: #769656;
+            --bg-main: #262522;
+            --bg-panel: #312e2b;
+            --bg-inset: rgba(0,0,0,0.2);
+            --bg-inset-deep: rgba(0,0,0,0.5);
+            --text-light: #f5f5f4;
+            --text-dark: #a8a29e;
+            --text-accent: #5a83b4;
+            --border: #57534e;
+            --btn-primary-bg: #2563eb;
+            --btn-primary-hover: #1d4ed8;
+            --btn-secondary-bg: #57534e;
+            --btn-secondary-hover: #44403c;
+        }
 
+        /* Prevents the main page from scrolling on larger screens */
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-main);
+            color: var(--text-light);
+            overflow: auto; /* Allow body to scroll on small screens */
+        }
+        aside { background-color: var(--bg-panel); }
+        .header-footer, #live-analysis-display { background-color: var(--bg-inset); }
+        .captured-pieces-container, .move-history-container, #ar-analysis-move-list, .bg-inset { background-color: var(--bg-inset); }
+        .themed-border { border-color: var(--border); }
+        .text-dark { color: var(--text-dark); }
+        .text-accent { color: var(--text-accent); }
+        .btn-primary { background-color: var(--btn-primary-bg); color: var(--text-light); transition: background-color 0.2s; }
+        .btn-primary:hover { background-color: var(--btn-primary-hover); }
+        .btn-secondary { background-color: var(--btn-secondary-bg); color: var(--text-light); transition: background-color 0.2s; }
+        .btn-secondary:hover { background-color: var(--btn-secondary-hover); }
+        .themed-select { background-color: var(--btn-secondary-bg); border-color: var(--border); }
+        .tab-button { color: var(--text-dark); border-bottom: 3px solid transparent; }
+        .tab-button.active { color: var(--text-light); border-bottom-color: var(--border); }
+        .current-move-analysis { background-color: var(--text-accent) !important; color: var(--text-light); }
+        .top-action-btn { padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.875rem; }
+        .top-action-icon-btn { background-color: rgba(255,255,255,0.1); border-radius: 6px; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+        .top-action-icon-btn:hover { background-color: rgba(255,255,255,0.2); }
+        .top-action-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .top-action-icon-btn img { width: 20px; height: 20px; filter: invert(0.9); }
+        
+        /* This ensures squares can contain pseudo-elements for highlighting */
+        div[data-square] {
+            position: relative;
+        }
+        /* This creates the red dot for threatened pieces and ENSURES IT IS NOT CLICKABLE */
+        .threatened-square::after {
+            content: '';
+            position: absolute;
+            top: 10%;
+            right: 10%;
+            width: 15%;
+            height: 15%;
+            border-radius: 50%;
+            background: radial-gradient(rgba(255, 20, 20, 0.8), transparent 70%);
+            pointer-events: none; /* This is the critical fix */
+        }
+        .board-svg-overlay {
+            grid-column: 2;
+            grid-row: 2;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allows clicks to pass through to the board */
+            overflow: visible;
+        }
+        .move-history-grid > span { text-align: center; } /* This helps align moves correctly */
+
+        /** NEW **/
+        /* Styles for click-to-move highlighting */
+        .highlight-selected {
+            background-color: rgba(45, 156, 219, 0.5) !important;
+        }
+        .highlight-legal::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30%;
+            height: 30%;
+            border-radius: 50%;
+            background: radial-gradient(rgba(20, 83, 45, 0.5), transparent 70%);
+            pointer-events: none;
+        }
+
+        /* Unchanged utility styles */
+        #board, #analysis-board { box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+        .white-1e1d7 { background-color: var(--light-square-color) !important; }
+        .black-3c85d { background-color: var(--dark-square-color) !important; }
+        .captured-piece { width: 28px; height: 28px; margin: 2px; }
+        .thinking-animation { animation:pulse 1.5s ease-in-out infinite; } @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
+        .board-wrapper { display: grid; grid-template-columns: 24px 1fr 24px; grid-template-rows: 24px 1fr 24px; justify-items: center; align-items: center; gap: 4px; }
+        #board, #analysis-board { grid-column: 2; grid-row: 2; }
+        .coordinates { color: var(--text-dark); font-weight: 600; font-size: 0.8rem; pointer-events: none; user-select: none; }
+        .files { display: flex; justify-content: space-around; width: 100%; }
+        .ranks { display: flex; flex-direction: column; justify-content: space-around; height: 100%; }
+        #top-files, #analysis-top-files { grid-column: 2; grid-row: 1; } #bottom-files, #analysis-bottom-files { grid-column: 2; grid-row: 3; }
+        #left-ranks, #analysis-left-ranks { grid-column: 1; grid-row: 2; } #right-ranks, #analysis-right-ranks { grid-column: 3; grid-row: 2; }
+        .tab-content { display: none; }
+        .tab-content.active { display: flex; }
+        .history-nav-btn { background-color: rgba(255,255,255,0.1); border-radius: 50%; padding: 6px; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+        .history-nav-btn:hover { background-color: rgba(255,255,255,0.2); }
+        .history-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .history-nav-btn img { width: 20px; height: 20px; filter: invert(0.9); }
+        .move-span { padding: 2px 4px; border-radius: 3px; }
+        .move-span:hover { background-color: rgba(255,255,255,0.15); cursor: pointer; }
+        .highlight-move { background-color: rgba(255, 193, 7, 0.3); }
+        .analysis-move-item { cursor: pointer; transition: background-color 0.2s; padding: 2px 8px; border-radius: 4px; }
+        .analysis-move-item:hover { background-color: #504d49; }
+        .premove-highlight { background-color: rgba(255, 165, 0, 0.7) !important; }
+        .hidden { display: none !important; }
+        #log-box-content .log-message { border-bottom: 1px solid #44403c; padding: 2px 0; }
+        #log-box-content .log-error { color: #f87171; }
+        #log-box-content .log-warn { color: #facc15; }
+        .move-history-grid { display: grid; grid-template-columns: 2.5rem 1fr 1fr; gap: 4px 8px; align-items: center; }
+        ::-webkit-scrollbar { width: 12px; }
+        ::-webkit-scrollbar-track { background: #3c3a37; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background-color: var(--dark-square-color); border-radius: 10px; border: 3px solid #3c3a37; }
+        ::-webkit-scrollbar-thumb:hover { background-color: var(--light-square-color); }
+        .overflow-y-auto { scrollbar-width: thin; scrollbar-color: var(--dark-square-color) #3c3a37; }
+    </style>
 </head>
 <body class="p-4">
 
@@ -222,10 +349,8 @@
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <script src="scripts/config.js"></script>
-    <script src="scripts/ui.js"></script>
-    <script src="scripts/board_interaction.js"></script>
-    <script src="scripts/script.js"></script>
-    <script src="scripts/analysis.js"></script>
+    <script src="config.js"></script>
+    <script src="script.js"></script>
+    <script src="analysis.js"></script>
 </body>
 </html>
