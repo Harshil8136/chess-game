@@ -176,6 +176,8 @@ window.AnalysisController = {
         this.currentMoveIndex = -1;
     },
 
+    /** MODIFIED **/
+    // The core analysis loop has been updated for more accurate CPL and move classification.
     runGameReview: async function() {
         if (this.gameHistory.length === 0) {
             this.showError("No moves to analyze.");
@@ -194,18 +196,24 @@ window.AnalysisController = {
                 const move = this.gameHistory[i];
                 progressIndicator.text(`Analyzing move ${i + 1} of ${this.gameHistory.length}...`);
                 
+                // Get evaluation of the position *before* the current move is made.
                 const positionEval = await this.getStaticEvaluation(tempGame.fen());
                 
+                // Get the evaluation from the perspective of the player whose turn it is.
                 const evalBeforeMove = (move.color === 'w') ? positionEval.best : -positionEval.best;
                 
+                // Make the move in our temporary game instance.
                 tempGame.move(move.san);
                 
-                // The evaluation after the move, from the perspective of the player who just moved.
+                // Get evaluation of the position *after* the move.
                 const evalAfterMove = await this.getStaticEvaluation(tempGame.fen());
-                const evalAfterFromPlayerPerspective = (move.color === 'w') ? -evalAfterMove.best : evalAfterMove.best;
+                // The eval is from White's perspective, so we convert it to the perspective of the player who just moved.
+                const evalAfterFromPlayerPerspective = (move.color === 'w') ? evalAfterMove.best : -evalAfterMove.best;
                 
+                // Centipawn Loss (CPL) is the drop in evaluation from the best possible move. It's always positive.
                 const cpl = Math.max(0, evalBeforeMove - evalAfterFromPlayerPerspective);
                 
+                // Get the difference in quality between the best move and the second-best move.
                 const bestMoveAdvantage = Math.abs(positionEval.best - positionEval.second);
                 
                 const classification = this.classifyMove(cpl, opponentCpl, bestMoveAdvantage, tempGame.pgn());
@@ -222,7 +230,7 @@ window.AnalysisController = {
 
                 this.reviewData.push({
                     move: move.san,
-                    score: -evalAfterMove.best, // Store eval from White's perspective
+                    score: evalAfterMove.best, // Store eval from White's perspective for the chart
                     classification: classification,
                     bestLineUci: positionEval.best_pv
                 });
@@ -466,7 +474,7 @@ window.AnalysisController = {
         try {
             if (this.evalChart) this.evalChart.destroy();
             const labels = ['Start'];
-            const data = [20]; // Standard starting eval
+            const data = [20]; // Standard starting eval from white's perspective
             this.reviewData.forEach((item, index) => {
                 const moveNum = Math.floor(index / 2) + 1;
                 const isWhite = index % 2 === 0;
@@ -478,18 +486,19 @@ window.AnalysisController = {
                 type: 'line',
                 data: { labels, datasets: [{
                     label: 'Position Evaluation', data,
-                    borderColor: 'rgba(59, 130, 246, 0.8)',
+                    borderColor: 'rgba(200, 200, 200, 0.8)',
                     backgroundColor: (context) => {
                         const chart = context.chart;
                         const {ctx, chartArea} = chart;
                         if (!chartArea) return;
                         const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-                        gradient.addColorStop(0.5, 'rgba(59, 130, 246, 0)');
-                        gradient.addColorStop(0, 'rgba(239, 68, 68, 0.2)');
-                        gradient.addColorStop(1, 'rgba(34, 197, 94, 0.2)');
+                        gradient.addColorStop(0.5, 'rgba(100, 100, 100, 0.2)');
+                        gradient.addColorStop(0.51, 'rgba(255, 255, 255, 0.3)');
+                        gradient.addColorStop(0.49, 'rgba(0, 0, 0, 0.3)');
                         return gradient;
                     },
-                    fill: true, borderWidth: 2, pointRadius: 1, pointHoverRadius: 4, tension: 0.1
+                    fill: { target: 'origin', above: 'rgba(255, 255, 255, 0.1)', below: 'rgba(0, 0, 0, 0.1)' },
+                    borderWidth: 2, pointRadius: 1, pointHoverRadius: 4, tension: 0.1
                 }]},
                 options: {
                     responsive: true, maintainAspectRatio: false,
