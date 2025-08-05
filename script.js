@@ -65,6 +65,7 @@ $(document).ready(function() {
     let aiDifficulty = 5;
     let pendingMove = null;
     let pendingPremove = null;
+    let selectedSquare = null; // NEW: For click-to-move
     let playerName = 'Player';
     let stockfish;
     let isStockfishThinking = false;
@@ -157,6 +158,11 @@ $(document).ready(function() {
         const config = { position, draggable: true, onDragStart, onDrop, pieceTheme: PIECE_THEMES[pieceThemeSelector.val()], moveSpeed: 200 };
         if (board) board.destroy();
         board = Chessboard('board', config);
+        
+        /** NEW **/
+        // Add click handler for click-to-move functionality.
+        boardElement.find('.square-55d63').on('click', onSquareClick);
+        
         board.orientation(humanPlayer === 'w' ? 'white' : 'black');
         renderCoordinates();
         syncSidebarHeight();
@@ -170,6 +176,8 @@ $(document).ready(function() {
         pendingPremove = null;
         pendingMove = null;
         removePremoveHighlight();
+        removeLegalHighlights(); // NEW
+        selectedSquare = null;     // NEW
         clearArrows();
         buildBoard('start');
         updatePlayerLabels();
@@ -198,6 +206,8 @@ $(document).ready(function() {
         pendingPremove = null;
         pendingMove = null;
         removePremoveHighlight();
+        removeLegalHighlights(); // NEW
+        selectedSquare = null;     // NEW
         clearArrows();
         buildBoard(game.fen());
         updatePlayerLabels();
@@ -236,7 +246,74 @@ $(document).ready(function() {
     }
 
     // --- Move Handling ---
+    
+    /** NEW **/
+    // This section contains all new functions for handling click-to-move.
+    function removeLegalHighlights() {
+        boardElement.find('.square-55d63').removeClass('highlight-legal highlight-selected');
+    }
+
+    function highlightLegalMoves(square) {
+        removeLegalHighlights();
+        const moves = game.moves({ square: square, verbose: true });
+        if (moves.length === 0) return;
+
+        boardElement.find(`.square-${square}`).addClass('highlight-selected');
+        for (const move of moves) {
+            boardElement.find(`.square-${move.to}`).addClass('highlight-legal');
+        }
+    }
+    
+    function onSquareClick() {
+        // Ignore clicks if it's not the player's turn, game is over, or in review mode
+        if (game.turn() !== humanPlayer || !gameActive || reviewMoveIndex !== null) {
+            if (selectedSquare) {
+                selectedSquare = null;
+                removeLegalHighlights();
+            }
+            return;
+        }
+
+        const clickedSquare = $(this).data('square');
+        const pieceOnClickedSquare = game.get(clickedSquare);
+
+        // If a piece was already selected
+        if (selectedSquare) {
+            const move = game.moves({ square: selectedSquare, verbose: true }).find(m => m.to === clickedSquare);
+            
+            // If the click is on a legal destination square
+            if (move) {
+                removeLegalHighlights();
+                if (move.flags.includes('p') && (move.to.endsWith('8') || move.to.endsWith('1'))) {
+                    pendingMove = { from: selectedSquare, to: clickedSquare, promotion: 'q' };
+                    showPromotionDialog(humanPlayer);
+                } else {
+                    const moveResult = game.move(move.san);
+                    if (moveResult) {
+                        playMoveSound(moveResult);
+                        updateGameState(false); // Let performMove handle the board update
+                    }
+                }
+                selectedSquare = null;
+                return;
+            }
+        }
+        
+        // If no piece was selected, or an invalid destination was clicked
+        removeLegalHighlights();
+        selectedSquare = null;
+
+        // If the click was on one of the player's own pieces, select it
+        if (pieceOnClickedSquare && pieceOnClickedSquare.color === humanPlayer) {
+            selectedSquare = clickedSquare;
+            highlightLegalMoves(clickedSquare);
+        }
+    }
+
+    /** MODIFIED **/
     function onDrop(source, target) {
+        removeLegalHighlights();
+        selectedSquare = null;
         clearArrows();
         if (reviewMoveIndex !== null) return;
         if (isStockfishThinking && game.turn() !== humanPlayer) {
@@ -261,11 +338,18 @@ $(document).ready(function() {
         }
     }
 
+    /** MODIFIED **/
     function onDragStart(source, piece) {
+        removeLegalHighlights();
+        selectedSquare = null;
         return reviewMoveIndex === null && gameActive && !game.game_over() && piece.startsWith(humanPlayer) && (game.turn() === humanPlayer || isStockfishThinking);
     }
     
     function performMove(move) {
+        /** MODIFIED **/
+        removeLegalHighlights();
+        selectedSquare = null;
+
         clearTimeout(engineTimeout);
         const moveResult = game.move(move, { sloppy: true });
         isStockfishThinking = false;
@@ -539,21 +623,16 @@ $(document).ready(function() {
         }
     }
     
-    /** NEW **/
-    // This entire section contains the logic for the new features added.
+    // This section contains the logic for newer features.
     function updateThreatHighlights() {
         boardElement.find('.threatened-square').removeClass('threatened-square');
         if (!highlightThreats || game.game_over() || reviewMoveIndex !== null) return;
-
-        // Determine whose pieces to check for threats against
         const threatenedPlayer = game.turn();
         const attackingPlayer = threatenedPlayer === 'w' ? 'b' : 'w';
         
         game.SQUARES.forEach(square => {
             const piece = game.get(square);
-            // If there's a piece on the square and it belongs to the player whose turn it is
             if (piece && piece.color === threatenedPlayer) {
-                // Check if any of the opponent's pieces can attack this square
                 if (game.attackers(square, attackingPlayer).length > 0) {
                      boardElement.find(`[data-square=${square}]`).addClass('threatened-square');
                 }
@@ -628,8 +707,11 @@ $(document).ready(function() {
         restartButton.on('click', initGame);
         swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
         
+        /** MODIFIED **/
         undoButton.on('click', () => {
             if (undoButton.prop('disabled')) return;
+            removeLegalHighlights();
+            selectedSquare = null;
             exitReviewMode();
             clearArrows();
             if (game.history().length >= 2) { game.undo(); game.undo(); }
@@ -799,8 +881,20 @@ $(document).ready(function() {
                     window.location.reload();
                 });
             });
-
-        boardElement.on('contextmenu', e => { e.preventDefault(); if (pendingPremove) { pendingPremove = null; removePremoveHighlight(); } });
+            
+        /** MODIFIED **/
+        // Added logic to cancel piece selection with a right-click.
+        boardElement.on('contextmenu', e => { 
+            e.preventDefault(); 
+            if (pendingPremove) { 
+                pendingPremove = null; 
+                removePremoveHighlight(); 
+            }
+            if (selectedSquare) {
+                selectedSquare = null;
+                removeLegalHighlights();
+            }
+        });
         $(window).on('resize', () => { clearTimeout(window.resizeTimer); window.resizeTimer = setTimeout(syncSidebarHeight, 150); });
     }
 
