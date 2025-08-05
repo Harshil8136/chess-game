@@ -55,6 +55,7 @@ $(document).ready(function() {
     const openingExplorer = $('#opening-explorer');
     const openingExplorerContent = $('#opening-explorer-content');
     const boardSvgOverlay = $('#board-svg-overlay');
+    const focusModeToggle = $('#focus-mode-toggle');
 
     // --- Game State ---
     let board = null;
@@ -65,7 +66,7 @@ $(document).ready(function() {
     let aiDifficulty = 5;
     let pendingMove = null;
     let pendingPremove = null;
-    let selectedSquare = null; // NEW: For click-to-move
+    let selectedSquare = null;
     let playerName = 'Player';
     let stockfish;
     let isStockfishThinking = false;
@@ -76,13 +77,17 @@ $(document).ready(function() {
     let engineTimeout = null;
     let isAnalysisMode = false;
     let highlightThreats = false;
+    let userShapes = [];
+    let isDrawing = false;
+    let drawStartSquare = null;
+
 
     // --- Layout and UI Functions ---
     function syncSidebarHeight() {
         const boardArea = document.getElementById('board-area-container');
         const sidebars = document.querySelectorAll('#main-game aside, #analysis-room aside');
         if (boardArea && sidebars.length) {
-            if (window.innerWidth >= 1024) {
+            if (window.innerWidth >= 1024 && !$('body').hasClass('focus-mode')) {
                 requestAnimationFrame(() => {
                     const boardHeight = boardArea.offsetHeight;
                     sidebars.forEach(sidebar => { sidebar.style.height = `${boardHeight}px`; });
@@ -155,17 +160,16 @@ $(document).ready(function() {
         const selectedTheme = THEMES.find(t => t.name === themeSelector.val()) || THEMES[0];
         document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
         document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
-        const config = { position, draggable: true, onDragStart, onDrop, pieceTheme: PIECE_THEMES[pieceThemeSelector.val()], moveSpeed: 200 };
+        const config = { position, draggable: true, onDragStart, onDrop, onSquareClick, pieceTheme: PIECE_THEMES[pieceThemeSelector.val()], moveSpeed: 200 };
         if (board) board.destroy();
         board = Chessboard('board', config);
         
-        /** NEW **/
-        // Add click handler for click-to-move functionality.
         boardElement.find('.square-55d63').on('click', onSquareClick);
         
         board.orientation(humanPlayer === 'w' ? 'white' : 'black');
         renderCoordinates();
         syncSidebarHeight();
+        redrawUserShapes();
     }
 
     function initGame() {
@@ -176,9 +180,9 @@ $(document).ready(function() {
         pendingPremove = null;
         pendingMove = null;
         removePremoveHighlight();
-        removeLegalHighlights(); // NEW
-        selectedSquare = null;     // NEW
-        clearArrows();
+        removeLegalHighlights();
+        selectedSquare = null;
+        clearUserShapes();
         buildBoard('start');
         updatePlayerLabels();
         updateEvalBar(0);
@@ -206,9 +210,9 @@ $(document).ready(function() {
         pendingPremove = null;
         pendingMove = null;
         removePremoveHighlight();
-        removeLegalHighlights(); // NEW
-        selectedSquare = null;     // NEW
-        clearArrows();
+        removeLegalHighlights();
+        selectedSquare = null;
+        clearUserShapes();
         buildBoard(game.fen());
         updatePlayerLabels();
         if (isLiveAnalysis) runLiveAnalysis();
@@ -226,6 +230,7 @@ $(document).ready(function() {
     function updateGameState(updateBoard = true) {
         if (updateBoard && reviewMoveIndex === null) {
             board.position(game.fen());
+            redrawUserShapes();
         }
         updateStatus();
         updateCapturedPieces();
@@ -246,9 +251,6 @@ $(document).ready(function() {
     }
 
     // --- Move Handling ---
-    
-    /** NEW **/
-    // This section contains all new functions for handling click-to-move.
     function removeLegalHighlights() {
         boardElement.find('.square-55d63').removeClass('highlight-legal highlight-selected');
     }
@@ -264,8 +266,10 @@ $(document).ready(function() {
         }
     }
     
-    function onSquareClick() {
-        // Ignore clicks if it's not the player's turn, game is over, or in review mode
+    function onSquareClick(square) {
+        if (isDrawing) return;
+        const clickedSquare = square;
+
         if (game.turn() !== humanPlayer || !gameActive || reviewMoveIndex !== null) {
             if (selectedSquare) {
                 selectedSquare = null;
@@ -274,14 +278,11 @@ $(document).ready(function() {
             return;
         }
 
-        const clickedSquare = $(this).data('square');
         const pieceOnClickedSquare = game.get(clickedSquare);
 
-        // If a piece was already selected
         if (selectedSquare) {
             const move = game.moves({ square: selectedSquare, verbose: true }).find(m => m.to === clickedSquare);
             
-            // If the click is on a legal destination square
             if (move) {
                 removeLegalHighlights();
                 if (move.flags.includes('p') && (move.to.endsWith('8') || move.to.endsWith('1'))) {
@@ -290,8 +291,9 @@ $(document).ready(function() {
                 } else {
                     const moveResult = game.move(move.san);
                     if (moveResult) {
+                        clearUserShapes();
                         playMoveSound(moveResult);
-                        updateGameState(false); // Let performMove handle the board update
+                        updateGameState(false);
                     }
                 }
                 selectedSquare = null;
@@ -299,22 +301,19 @@ $(document).ready(function() {
             }
         }
         
-        // If no piece was selected, or an invalid destination was clicked
         removeLegalHighlights();
         selectedSquare = null;
 
-        // If the click was on one of the player's own pieces, select it
         if (pieceOnClickedSquare && pieceOnClickedSquare.color === humanPlayer) {
             selectedSquare = clickedSquare;
             highlightLegalMoves(clickedSquare);
         }
     }
 
-    /** MODIFIED **/
     function onDrop(source, target) {
         removeLegalHighlights();
         selectedSquare = null;
-        clearArrows();
+        clearUserShapes();
         if (reviewMoveIndex !== null) return;
         if (isStockfishThinking && game.turn() !== humanPlayer) {
             removePremoveHighlight();
@@ -338,7 +337,6 @@ $(document).ready(function() {
         }
     }
 
-    /** MODIFIED **/
     function onDragStart(source, piece) {
         removeLegalHighlights();
         selectedSquare = null;
@@ -346,9 +344,9 @@ $(document).ready(function() {
     }
     
     function performMove(move) {
-        /** MODIFIED **/
         removeLegalHighlights();
         selectedSquare = null;
+        clearUserShapes();
 
         clearTimeout(engineTimeout);
         const moveResult = game.move(move, { sloppy: true });
@@ -366,7 +364,10 @@ $(document).ready(function() {
         pendingPremove = null;
         removePremoveHighlight();
         const validPremove = game.moves({ verbose: true }).find(m => m.from === move.from && m.to === move.to);
-        if (validPremove) performMove(validPremove.san);
+        if (validPremove) {
+            clearUserShapes();
+            performMove(validPremove.san);
+        }
     }
     
     // --- AI & Analysis Functions ---
@@ -426,6 +427,7 @@ $(document).ready(function() {
         updateMoveHistoryDisplay();
         updateNavButtons();
         statusElement.text(`Reviewing move ${Math.floor(reviewMoveIndex / 2) + 1}...`);
+        clearUserShapes();
     }
 
     function exitReviewMode() {
@@ -435,6 +437,7 @@ $(document).ready(function() {
         updateMoveHistoryDisplay();
         updateNavButtons();
         updateStatus();
+        clearUserShapes();
     }
     
     function updateNavButtons() {
@@ -477,7 +480,7 @@ $(document).ready(function() {
         gsap.to(evalBarBlack, { height: `${100 - clamped}%`, duration: 0.7, ease: 'power2.out' });
     }
 
-    function renderCoordinates() { const isFlipped = humanPlayer === 'b'; const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']; let ranks = ['1', '2', '3', '4', '5', '6', '7', '8']; if (isFlipped) { files.reverse(); ranks.reverse(); } const topFilesHtml = files.map(f => `<span>${f}</span>`).join(''); const bottomFilesHtml = files.map(f => `<span>${f}</span>`).join(''); const ranksHtml = ranks.slice().reverse().map(r => `<span>${r}</span>`).join(''); topFiles.html(topFilesHtml); bottomFiles.html(bottomFilesHtml); leftRanks.html(ranksHtml); rightRanks.html(ranksHtml); }
+    function renderCoordinates() { const isFlipped = board.orientation() === 'black'; const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']; let ranks = ['1', '2', '3', '4', '5', '6', '7', '8']; if (isFlipped) { files.reverse(); } else { ranks.reverse(); } const topFilesHtml = files.map(f => `<span>${f}</span>`).join(''); const bottomFilesHtml = files.map(f => `<span>${f}</span>`).join(''); const ranksHtml = ranks.map(r => `<span>${r}</span>`).join(''); topFiles.html(topFilesHtml); bottomFiles.html(bottomFilesHtml); leftRanks.html(ranksHtml); rightRanks.html(ranksHtml); }
     
     function updatePlayerLabels() {
         bottomPlayerNameElement.text(humanPlayer === 'w' ? `${playerName} (White)` : `AI (White)`);
@@ -623,7 +626,6 @@ $(document).ready(function() {
         }
     }
     
-    // This section contains the logic for newer features.
     function updateThreatHighlights() {
         boardElement.find('.threatened-square').removeClass('threatened-square');
         if (!highlightThreats || game.game_over() || reviewMoveIndex !== null) return;
@@ -634,7 +636,7 @@ $(document).ready(function() {
             const piece = game.get(square);
             if (piece && piece.color === threatenedPlayer) {
                 if (game.attackers(square, attackingPlayer).length > 0) {
-                     boardElement.find(`[data-square=${square}]`).addClass('threatened-square');
+                        boardElement.find(`[data-square=${square}]`).addClass('threatened-square');
                 }
             }
         });
@@ -642,7 +644,7 @@ $(document).ready(function() {
 
     function updateOpeningExplorer() {
         const pgn = game.pgn();
-        if (!pgn || game.history().length > 10) { // Only show for first 5 full moves
+        if (!pgn || game.history().length > 10) {
             openingExplorer.addClass('hidden');
             return;
         }
@@ -655,12 +657,29 @@ $(document).ready(function() {
         }
     }
 
-    function clearArrows(svgOverlay = boardSvgOverlay) {
-        svgOverlay.empty();
+    function clearUserShapes() {
+        userShapes = [];
+        redrawUserShapes();
     }
 
-    function drawArrow(from, to, color = 'rgba(42, 122, 42, 0.6)', svgOverlay = boardSvgOverlay) {
+    function redrawUserShapes(svgOverlay = boardSvgOverlay) {
+        svgOverlay.empty();
+        boardElement.find('.square-55d63').removeClass('highlight-user-green highlight-user-red highlight-user-yellow highlight-user-blue');
+
+        if (!board) return;
+
+        userShapes.forEach(shape => {
+            if (shape.type === 'highlight') {
+                boardElement.find(`.square-${shape.square}`).addClass(`highlight-user-${shape.color}`);
+            } else if (shape.type === 'arrow') {
+                drawArrow(shape.from, shape.to, shape.color, svgOverlay);
+            }
+        });
+    }
+
+    function drawArrow(from, to, color = 'rgba(21, 128, 61, 0.7)', svgOverlay = boardSvgOverlay) {
         const boardWidth = boardElement.width();
+        if (!boardWidth) return;
         const squareSize = boardWidth / 8;
         const isFlipped = board.orientation() === 'black';
         const getCoords = (square) => {
@@ -672,14 +691,13 @@ $(document).ready(function() {
         const fromCoords = getCoords(from);
         const toCoords = getCoords(to);
         const markerId = `arrowhead-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
-        if (!svgOverlay.find(`#${markerId}`).length) {
+
+        if (svgOverlay.find(`#${markerId}`).length === 0) {
             const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
             marker.setAttribute('id', markerId);
             marker.setAttribute('viewBox', '0 0 10 10');
-            marker.setAttribute('refX', '5');
-            marker.setAttribute('refY', '5');
-            marker.setAttribute('markerWidth', '3.5');
-            marker.setAttribute('markerHeight', '3.5');
+            marker.setAttribute('refX', '5'); marker.setAttribute('refY', '5');
+            marker.setAttribute('markerWidth', '3.5'); marker.setAttribute('markerHeight', '3.5');
             marker.setAttribute('orient', 'auto-start-reverse');
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
@@ -687,11 +705,10 @@ $(document).ready(function() {
             marker.appendChild(path);
             svgOverlay.append(marker);
         }
+
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', fromCoords.x);
-        line.setAttribute('y1', fromCoords.y);
-        line.setAttribute('x2', toCoords.x);
-        line.setAttribute('y2', toCoords.y);
+        line.setAttribute('x1', fromCoords.x); line.setAttribute('y1', fromCoords.y);
+        line.setAttribute('x2', toCoords.x); line.setAttribute('y2', toCoords.y);
         line.style.stroke = color;
         line.style.strokeWidth = '14px';
         line.setAttribute('marker-end', `url(#${markerId})`);
@@ -705,21 +722,20 @@ $(document).ready(function() {
         
         $('.tab-button').on('click', function() { showTab($(this).data('tab')); });
         restartButton.on('click', initGame);
-        swapSidesButton.on('click', () => { [humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame(); });
+        swapSidesButton.on('click', () => { if(gameActive && game.history().length === 0) {[humanPlayer, aiPlayer] = [aiPlayer, humanPlayer]; initGame();} else { Swal.fire('Oops!', 'Can only swap sides at the start of a new game.', 'info'); } });
         
-        /** MODIFIED **/
         undoButton.on('click', () => {
             if (undoButton.prop('disabled')) return;
             removeLegalHighlights();
             selectedSquare = null;
             exitReviewMode();
-            clearArrows();
+            clearUserShapes();
             if (game.history().length >= 2) { game.undo(); game.undo(); }
             updateGameState(true);
         });
         
         historyFirstBtn.on('click', () => { if (!historyFirstBtn.prop('disabled')) { reviewMoveIndex = 0; showHistoryPosition(); } });
-        historyPrevBtn.on('click', () => { if (!historyPrevBtn.prop('disabled')) { if (reviewMoveIndex === null) reviewMoveIndex = game.history().length - 1; if (reviewMoveIndex > 0) reviewMoveIndex--; showHistoryPosition(); } });
+        historyPrevBtn.on('click', () => { if (!historyPrevBtn.prop('disabled')) { if (reviewMoveIndex === null) reviewMoveIndex = game.history().length - 1; if (reviewMoveIndex > 0) reviewMoveIndex--; else reviewMoveIndex = 0; showHistoryPosition(); } });
         historyNextBtn.on('click', () => { if (!historyNextBtn.prop('disabled')) { if (reviewMoveIndex === null) return; if (reviewMoveIndex < game.history().length - 1) reviewMoveIndex++; showHistoryPosition(); } });
         historyLastBtn.on('click', exitReviewMode);
         moveHistoryLog.on('click', '.move-span', function() { reviewMoveIndex = parseInt($(this).data('move-index')); showHistoryPosition(); });
@@ -733,9 +749,9 @@ $(document).ready(function() {
             switchToAnalysisRoom();
         });
 
-        // --- NEW FEATURE HANDLERS ---
         hintButton.on('click', function() {
             if ($(this).prop('disabled')) return;
+            clearUserShapes();
             let originalOnMessage = stockfish.onmessage;
             stockfish.postMessage(`position fen ${game.fen()}`);
             stockfish.postMessage('go movetime 1000');
@@ -746,9 +762,8 @@ $(document).ready(function() {
                         const move = message.split(' ')[1];
                         const from = move.substring(0, 2);
                         const to = move.substring(2, 4);
-                        clearArrows();
-                        drawArrow(from, to);
-                        setTimeout(() => clearArrows(), 3000);
+                        drawArrow(from, to, 'rgba(255, 165, 0, 0.7)');
+                        setTimeout(() => redrawUserShapes(), 3000);
                         stockfish.onmessage = originalOnMessage;
                     } else if (originalOnMessage) {
                         originalOnMessage(event);
@@ -785,6 +800,86 @@ $(document).ready(function() {
             localStorage.setItem('chessHighlightThreats', highlightThreats);
             updateThreatHighlights();
         });
+        
+        focusModeToggle.on('click', function() {
+            $('body').toggleClass('focus-mode');
+            localStorage.setItem('chessFocusMode', $('body').hasClass('focus-mode'));
+            setTimeout(() => { $(window).trigger('resize'); }, 50);
+        });
+
+        $('#main-game').on('click', function(e) {
+            if ($('body').hasClass('focus-mode') && $(e.target).is(this)) {
+                focusModeToggle.click();
+            }
+        });
+
+        $(document).on('keydown', function(e) {
+            if ($(e.target).is('input, select, textarea') || Swal.isVisible()) return;
+            if (isAnalysisMode) return;
+
+            switch (e.key.toLowerCase()) {
+                case 'arrowleft': case 'a': historyPrevBtn.click(); break;
+                case 'arrowright': case 'd': historyNextBtn.click(); break;
+                case 'arrowup': case 'w': historyFirstBtn.click(); break;
+                case 'arrowdown': case 's': historyLastBtn.click(); break;
+                case 'f':
+                    board.flip();
+                    renderCoordinates();
+                    redrawUserShapes();
+                    break;
+                case 'n': restartButton.click(); break;
+                case 't': swapSidesButton.click(); break; // 's' is now for navigation
+                case 'escape':
+                    if ($('body').hasClass('focus-mode')) {
+                        focusModeToggle.click();
+                    }
+                    break;
+                default: return;
+            }
+            e.preventDefault();
+        });
+
+        boardElement.on('mousedown contextmenu', function(e) {
+            if (e.which !== 3) return;
+            e.preventDefault();
+            removeLegalHighlights();
+            selectedSquare = null;
+            isDrawing = true;
+            drawStartSquare = $(e.target).closest('[data-square]').data('square');
+        });
+
+        $(document).on('mouseup', function(e) {
+            if (!isDrawing || e.which !== 3) {
+                isDrawing = false;
+                drawStartSquare = null;
+                return;
+            }
+            e.preventDefault();
+            
+            const endSquare = $(e.target).closest('[data-square]').data('square');
+
+            if (drawStartSquare && endSquare) {
+                if (drawStartSquare === endSquare) {
+                    const existingHighlightIndex = userShapes.findIndex(s => s.type === 'highlight' && s.square === drawStartSquare);
+                    if (existingHighlightIndex > -1) userShapes.splice(existingHighlightIndex, 1);
+                    else userShapes.push({ type: 'highlight', square: drawStartSquare, color: 'green' });
+                } else {
+                    const existingArrowIndex = userShapes.findIndex(s => s.type === 'arrow' && s.from === drawStartSquare && s.to === endSquare);
+                     if (existingArrowIndex > -1) userShapes.splice(existingArrowIndex, 1);
+                     else userShapes.push({ type: 'arrow', from: drawStartSquare, to: endSquare, color: 'rgba(21, 128, 61, 0.7)' });
+                }
+            } else {
+                clearUserShapes();
+            }
+            
+            redrawUserShapes();
+            isDrawing = false;
+            drawStartSquare = null;
+        });
+
+        if (localStorage.getItem('chessFocusMode') === 'true') {
+            focusModeToggle.click();
+        }
         highlightThreats = localStorage.getItem('chessHighlightThreats') === 'true';
         threatsToggle.prop('checked', highlightThreats);
         
@@ -882,22 +977,8 @@ $(document).ready(function() {
                 });
             });
             
-        /** MODIFIED **/
-        // Added logic to cancel piece selection with a right-click.
-        boardElement.on('contextmenu', e => { 
-            e.preventDefault(); 
-            if (pendingPremove) { 
-                pendingPremove = null; 
-                removePremoveHighlight(); 
-            }
-            if (selectedSquare) {
-                selectedSquare = null;
-                removeLegalHighlights();
-            }
-        });
-        $(window).on('resize', () => { clearTimeout(window.resizeTimer); window.resizeTimer = setTimeout(syncSidebarHeight, 150); });
+        $(window).on('resize', () => { clearTimeout(window.resizeTimer); window.resizeTimer = setTimeout(() => { board.resize(); syncSidebarHeight(); redrawUserShapes(); }, 150); });
     }
 
     initApp();
 });
-
