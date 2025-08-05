@@ -20,6 +20,7 @@ Here is the hierarchical directory structure of your project based on the file p
 ├── script.js
 ├── analysis.js
 ├── config.js
+├── style.css
 │
 ├── img/
 │   └── (This folder contains all piece image sets referenced in config.js)
