@@ -45,6 +45,7 @@ $(document).ready(function() {
     const logBoxContent = $('#log-box-content');
     const logBoxClearBtn = $('#log-box-clear');
     const logBoxCloseBtn = $('#log-box-close');
+    const logBoxResizeHandle = $('#log-box-resize-handle');
     const summaryOpeningName = $('#summary-opening-name');
     const summaryFinalMaterial = $('#summary-final-material');
     const hintButton = $('#hint-button');
@@ -56,6 +57,9 @@ $(document).ready(function() {
     const openingExplorerContent = $('#opening-explorer-content');
     const boardSvgOverlay = $('#board-svg-overlay');
     const focusModeToggle = $('#focus-mode-toggle');
+    const analysisVisualizer = $('#analysis-visualizer');
+    const visualizerCancelBtn = $('#visualizer-cancel-btn');
+
 
     // --- Game State ---
     let board = null;
@@ -109,6 +113,7 @@ $(document).ready(function() {
         isAnalysisMode = false;
         analysisRoomView.addClass('hidden');
         mainGameView.removeClass('hidden');
+        analysisVisualizer.addClass('hidden'); // Ensure visualizer is hidden
         if (window.AnalysisController && typeof window.AnalysisController.stop === 'function') {
             window.AnalysisController.stop();
         }
@@ -120,19 +125,13 @@ $(document).ready(function() {
         }
     }
 
-    function switchToAnalysisRoom() {
+    // UPDATED: Made globally accessible for analysis.js
+    window.switchToAnalysisRoom = function() {
         isAnalysisMode = true;
         mainGameView.addClass('hidden');
+        analysisVisualizer.addClass('hidden');
         analysisRoomView.removeClass('hidden');
-        window.gameDataToAnalyze = {
-            pgn: game.pgn(), stockfish: stockfish, history: game.history({ verbose: true })
-        };
-        if (window.AnalysisController && typeof window.AnalysisController.init === 'function') {
-            window.AnalysisController.init();
-        } else {
-            console.error('AnalysisController not available');
-            Swal.fire('Error', 'Analysis system not loaded properly.', 'error');
-        }
+        // This function is now called by AnalysisController when analysis is complete
     }
     
     // --- Sound Functions ---
@@ -142,17 +141,17 @@ $(document).ready(function() {
         });
     }
 
-    function playSound(soundName) {
+    window.playSound = function(soundName) {
         if (isMuted) return;
         if (sounds[soundName]) sounds[soundName].play();
     }
 
     function playMoveSound(move) {
-        if (move.flags.includes('p')) playSound('promote');
-        else if (move.flags.includes('k') || move.flags.includes('q')) playSound('castle');
-        else if (move.flags.includes('c')) playSound('capture');
-        else playSound('moveSelf');
-        if (game.in_check()) playSound('check');
+        if (move.flags.includes('p')) window.playSound('promote');
+        else if (move.flags.includes('k') || move.flags.includes('q')) window.playSound('castle');
+        else if (move.flags.includes('c')) window.playSound('capture');
+        else window.playSound('moveSelf');
+        if (game.in_check()) window.playSound('check');
     }
 
     // --- Core Game Functions ---
@@ -187,7 +186,7 @@ $(document).ready(function() {
         updatePlayerLabels();
         updateEvalBar(0);
         updateGameState(false);
-        playSound('gameStart');
+        window.playSound('gameStart');
         runAnalysisBtn.prop('disabled', true);
         $('#game-summary-section').addClass('hidden');
         liveAnalysisToggle.prop('checked', false).trigger('change');
@@ -218,7 +217,7 @@ $(document).ready(function() {
         if (isLiveAnalysis) runLiveAnalysis();
         else updateEvalBar(0);
         updateGameState(false);
-        playSound('notify');
+        window.playSound('notify');
         runAnalysisBtn.prop('disabled', true);
         $('#game-summary-section').addClass('hidden');
         showTab('moves');
@@ -540,7 +539,7 @@ $(document).ready(function() {
             }
         }
         if (reviewMoveIndex === null) {
-            moveHistoryLog.scrollTop(moveHistoryLog[0].scrollHeight);
+           // Auto-scrolling disabled
         }
         updateNavButtons();
     }
@@ -572,7 +571,7 @@ $(document).ready(function() {
         if (game.in_checkmate()) { msg = `Checkmate! ${game.turn() === 'w' ? 'Black' : 'White'} wins.`; }
         else { msg = "Game is a draw."; }
         statusElement.text(msg);
-        playSound('gameEnd');
+        window.playSound('gameEnd');
         runAnalysisBtn.prop('disabled', false);
         updateGameSummary();
         $('#game-summary-section').removeClass('hidden');
@@ -607,15 +606,39 @@ $(document).ready(function() {
         logBoxToggle.on('change', function() { logBoxContainer.toggleClass('hidden', !this.checked); if (this.checked) console.log("Log box opened."); });
         logBoxClearBtn.on('click', () => logBoxContent.empty());
         logBoxCloseBtn.on('click', () => logBoxToggle.prop('checked', false).trigger('change'));
+        
         let isDragging = false, offset = { x: 0, y: 0 };
+        let isResizing = false;
+
         logBoxHeader.on('mousedown', function(e) {
+            if ($(e.target).is('button') || $(e.target).parent().is('button')) return;
             isDragging = true;
             let containerOffset = logBoxContainer.offset();
             offset.x = e.clientX - containerOffset.left;
             offset.y = e.clientY - containerOffset.top;
-            $(document).on('mousemove.logbox', e => { if (isDragging) logBoxContainer.css({ top: e.clientY - offset.y, left: e.clientX - offset.x }); });
         });
-        $(document).on('mouseup', () => { isDragging = false; $(document).off('mousemove.logbox'); });
+
+        logBoxResizeHandle.on('mousedown', function(e) {
+            e.preventDefault();
+            isResizing = true;
+        });
+
+        $(document).on('mousemove', function(e) {
+            if (isDragging) {
+                logBoxContainer.css({ top: e.clientY - offset.y, left: e.clientX - offset.x });
+            }
+            if (isResizing) {
+                const containerOffset = logBoxContainer.offset();
+                const newWidth = e.clientX - containerOffset.left;
+                const newHeight = e.clientY - containerOffset.top;
+                logBoxContainer.css({ width: `${newWidth}px`, height: `${newHeight}px` });
+            }
+        });
+
+        $(document).on('mouseup', () => {
+            isDragging = false;
+            isResizing = false;
+        });
     }
     
     function applyUiTheme(themeName) {
@@ -627,8 +650,9 @@ $(document).ready(function() {
     }
     
     function updateThreatHighlights() {
-        boardElement.find('.threatened-square').removeClass('threatened-square');
+        boardElement.find('.square-55d63').removeClass('threatened-square');
         if (!highlightThreats || game.game_over() || reviewMoveIndex !== null) return;
+        
         const threatenedPlayer = game.turn();
         const attackingPlayer = threatenedPlayer === 'w' ? 'b' : 'w';
         
@@ -636,7 +660,7 @@ $(document).ready(function() {
             const piece = game.get(square);
             if (piece && piece.color === threatenedPlayer) {
                 if (game.attackers(square, attackingPlayer).length > 0) {
-                        boardElement.find(`[data-square=${square}]`).addClass('threatened-square');
+                    boardElement.find(`[data-square=${square}]`).addClass('threatened-square');
                 }
             }
         });
@@ -746,12 +770,36 @@ $(document).ready(function() {
             if ($(this).prop('disabled')) return;
             if (game.history().length === 0) { Swal.fire('Error', 'No moves to analyze.', 'error'); return; }
             if (!stockfish) { Swal.fire('Error', 'Chess engine not available.', 'error'); return; }
-            switchToAnalysisRoom();
+
+            analysisVisualizer.removeClass('hidden');
+            
+            window.gameDataToAnalyze = {
+                pgn: game.pgn(),
+                stockfish: stockfish,
+                history: game.history({ verbose: true })
+            };
+            if (window.AnalysisController && typeof window.AnalysisController.init === 'function') {
+                window.AnalysisController.init();
+            } else {
+                console.error('AnalysisController not available');
+                Swal.fire('Error', 'Analysis system not loaded properly.', 'error');
+                analysisVisualizer.addClass('hidden');
+            }
+        });
+        
+        visualizerCancelBtn.on('click', function() {
+            analysisVisualizer.addClass('hidden');
+            if (window.AnalysisController && typeof window.AnalysisController.stop === 'function') {
+                window.AnalysisController.stop();
+            }
         });
 
         hintButton.on('click', function() {
             if ($(this).prop('disabled')) return;
+            
+            const originalShapes = [...userShapes];
             clearUserShapes();
+
             let originalOnMessage = stockfish.onmessage;
             stockfish.postMessage(`position fen ${game.fen()}`);
             stockfish.postMessage('go movetime 1000');
@@ -763,7 +811,12 @@ $(document).ready(function() {
                         const from = move.substring(0, 2);
                         const to = move.substring(2, 4);
                         drawArrow(from, to, 'rgba(255, 165, 0, 0.7)');
-                        setTimeout(() => redrawUserShapes(), 3000);
+                        
+                        setTimeout(() => {
+                            userShapes = originalShapes;
+                            redrawUserShapes();
+                        }, 3000);
+                        
                         stockfish.onmessage = originalOnMessage;
                     } else if (originalOnMessage) {
                         originalOnMessage(event);
@@ -828,7 +881,7 @@ $(document).ready(function() {
                     redrawUserShapes();
                     break;
                 case 'n': restartButton.click(); break;
-                case 't': swapSidesButton.click(); break; // 's' is now for navigation
+                case 't': swapSidesButton.click(); break;
                 case 'escape':
                     if ($('body').hasClass('focus-mode')) {
                         focusModeToggle.click();
@@ -849,32 +902,28 @@ $(document).ready(function() {
         });
 
         $(document).on('mouseup', function(e) {
-            if (!isDrawing || e.which !== 3) {
+            if (isDrawing && e.which === 3) {
+                 e.preventDefault();
+                const endSquare = $(e.target).closest('[data-square]').data('square');
+
+                if (drawStartSquare && endSquare) {
+                    if (drawStartSquare === endSquare) {
+                        const existingHighlightIndex = userShapes.findIndex(s => s.type === 'highlight' && s.square === drawStartSquare);
+                        if (existingHighlightIndex > -1) userShapes.splice(existingHighlightIndex, 1);
+                        else userShapes.push({ type: 'highlight', square: drawStartSquare, color: 'green' });
+                    } else {
+                        const existingArrowIndex = userShapes.findIndex(s => s.type === 'arrow' && s.from === drawStartSquare && s.to === endSquare);
+                         if (existingArrowIndex > -1) userShapes.splice(existingArrowIndex, 1);
+                         else userShapes.push({ type: 'arrow', from: drawStartSquare, to: endSquare, color: 'rgba(21, 128, 61, 0.7)' });
+                    }
+                } else {
+                    clearUserShapes();
+                }
+                
+                redrawUserShapes();
                 isDrawing = false;
                 drawStartSquare = null;
-                return;
             }
-            e.preventDefault();
-            
-            const endSquare = $(e.target).closest('[data-square]').data('square');
-
-            if (drawStartSquare && endSquare) {
-                if (drawStartSquare === endSquare) {
-                    const existingHighlightIndex = userShapes.findIndex(s => s.type === 'highlight' && s.square === drawStartSquare);
-                    if (existingHighlightIndex > -1) userShapes.splice(existingHighlightIndex, 1);
-                    else userShapes.push({ type: 'highlight', square: drawStartSquare, color: 'green' });
-                } else {
-                    const existingArrowIndex = userShapes.findIndex(s => s.type === 'arrow' && s.from === drawStartSquare && s.to === endSquare);
-                     if (existingArrowIndex > -1) userShapes.splice(existingArrowIndex, 1);
-                     else userShapes.push({ type: 'arrow', from: drawStartSquare, to: endSquare, color: 'rgba(21, 128, 61, 0.7)' });
-                }
-            } else {
-                clearUserShapes();
-            }
-            
-            redrawUserShapes();
-            isDrawing = false;
-            drawStartSquare = null;
         });
 
         if (localStorage.getItem('chessFocusMode') === 'true') {
@@ -884,7 +933,7 @@ $(document).ready(function() {
         threatsToggle.prop('checked', highlightThreats);
         
         themeSelector.on('change', () => { localStorage.setItem('chessBoardTheme', themeSelector.val()); buildBoard(game.fen()); });
-        pieceThemeSelector.on('change', () => { localStorage.setItem('chessPieceTheme', pieceThemeSelector.val()); buildBoard(game.fen()); });
+        pieceThemeSelector.on('change', () => { localStorage.setItem('chessPieceTheme', pieceThemeSelector.val()); buildBoard(game.fen()); updateCapturedPieces()});
         difficultySlider.on('input', e => { aiDifficulty = parseInt(e.target.value, 10); eloDisplay.text(DIFFICULTY_SETTINGS[aiDifficulty]?.elo || 1200); localStorage.setItem('chessDifficulty', aiDifficulty); });
         soundToggle.on('click', () => { isMuted = !isMuted; localStorage.setItem('chessSoundMuted', isMuted); soundIcon.attr('src', isMuted ? 'icon/speaker-x-mark.png' : 'icon/speaker-wave.png'); });
         playerNameElement.on('click', () => { Swal.fire({ title: 'Enter your name', input: 'text', inputValue: playerName, showCancelButton: true, confirmButtonText: 'Save', customClass: { popup: '!bg-stone-800', title: '!text-white', input: '!text-black' }, inputValidator: v => !v || v.trim().length === 0 ? 'Please enter a name!' : null }).then(r => { if (r.isConfirmed) { playerName = r.value.trim(); localStorage.setItem('chessPlayerName', playerName); updatePlayerLabels(); } }); });
