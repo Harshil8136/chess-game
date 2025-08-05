@@ -22,6 +22,14 @@ window.AnalysisController = {
     bestLineDisplay: null,
     bestLineMoves: null,
     analysisBoardSvgOverlay: null,
+    // NEW: Visualizer elements
+    visualizerBoard: null,
+    visualizerBoardWrapper: null,
+    visualizerStatusElement: null,
+    visualizerMoveNumberElement: null,
+    visualizerMovePlayedElement: null,
+    visualizerMoveAssessmentElement: null,
+    visualizerProgressBar: null,
 
     // --- State Variables ---
     stockfish: null,
@@ -34,7 +42,6 @@ window.AnalysisController = {
     accuracy: { w: 0, b: 0 },
     moveCounts: { w: {}, b: {} },
     cpl: { w: [], b: [] },
-    // NEW: State for user-drawn shapes in analysis
     userShapes: [],
     isDrawing: false,
     drawStartSquare: null,
@@ -52,7 +59,12 @@ window.AnalysisController = {
         'Blunder': { title: 'Blunder', comment: 'A very bad move that could lead to losing the game.', color: 'text-red-600', icon: '??' },
         'Miss': { title: 'Missed Opportunity', comment: 'Your opponent made a mistake, but you missed the best punishment.', color: 'text-purple-400', icon: '...' }
     },
-    REVIEW_DEPTH: 14,
+    // UPDATED: Adaptive depth settings (Task #8)
+    ADAPTIVE_DEPTH: {
+        opening: 12, // First 20 half-moves (10 full moves)
+        endgame: 16, // The rest of the game
+        opening_ply: 20
+    },
 
     /**
      * Entry point called by script.js to start the analysis mode.
@@ -87,6 +99,7 @@ window.AnalysisController = {
                 this.moveCounts.b[key] = 0;
             }
 
+            // Get references to all UI elements
             this.moveListElement = $('#ar-analysis-move-list');
             this.evalChartCanvas = $('#ar-eval-chart');
             this.assessmentDetailsElement = $('#ar-move-assessment-details');
@@ -102,8 +115,16 @@ window.AnalysisController = {
             this.bestLineMoves = $('#ar-best-line-moves');
             this.analysisBoardSvgOverlay = $('#analysis-board-svg-overlay');
             this.analysisBoardElement = $('#analysis-board');
+            // NEW: Visualizer elements (Task #9)
+            this.visualizerBoardWrapper = $('#visualizer-board-wrapper');
+            this.visualizerStatusElement = $('#visualizer-status');
+            this.visualizerMoveNumberElement = $('#visualizer-move-number');
+            this.visualizerMovePlayedElement = $('#visualizer-move-played');
+            this.visualizerMoveAssessmentElement = $('#visualizer-move-assessment');
+            this.visualizerProgressBar = $('#visualizer-progress-bar');
             
             this.initializeBoard();
+            this.initializeVisualizerBoard(); // NEW
             this.setupEventHandlers();
             this.runGameReview();
             
@@ -132,6 +153,22 @@ window.AnalysisController = {
             this.showError("Failed to initialize analysis board.");
         }
     },
+
+    // NEW: Initialize the small board for the visualizer screen (Task #9)
+    initializeVisualizerBoard: function() {
+        try {
+            const boardConfig = {
+                position: 'start',
+                pieceTheme: PIECE_THEMES[localStorage.getItem('chessPieceTheme') || 'cburnett']
+            };
+            if (this.visualizerBoard && typeof this.visualizerBoard.destroy === 'function') {
+                this.visualizerBoard.destroy();
+            }
+            this.visualizerBoard = Chessboard('visualizer-board-wrapper', boardConfig);
+        } catch (error) {
+            console.error('AnalysisController: Error initializing visualizer board:', error);
+        }
+    },
     
     setupEventHandlers: function() {
         // Move list navigation
@@ -139,6 +176,7 @@ window.AnalysisController = {
             const moveIndex = parseInt($(e.currentTarget).data('move-index'));
             if (!isNaN(moveIndex) && moveIndex >= 0 && moveIndex < this.gameHistory.length) {
                 this.navigateToMove(moveIndex);
+                window.playSound('moveSelf'); // UPDATED: Add sound feedback (Task #7)
             }
         });
 
@@ -171,13 +209,14 @@ window.AnalysisController = {
                 case 'f':
                     this.analysisBoard.flip();
                     this.renderCoordinates();
-                    this.redrawUserShapes(); // Redraw shapes on flipped board
+                    this.redrawUserShapes();
                     break;
                 default: return;
             }
 
             if (newIndex !== this.currentMoveIndex) {
                  this.navigateToMove(newIndex);
+                 window.playSound('moveSelf'); // UPDATED: Add sound feedback (Task #7)
             }
             e.preventDefault();
         });
@@ -190,7 +229,6 @@ window.AnalysisController = {
             this.drawStartSquare = $(e.target).closest('[data-square]').data('square');
         });
 
-        // Use a namespaced mouseup on document to catch drags ending outside the board
         $(document).off('mouseup.analysis_draw').on('mouseup.analysis_draw', (e) => {
             if (!this.isDrawing || e.which !== 3) {
                 this.isDrawing = false;
@@ -238,10 +276,11 @@ window.AnalysisController = {
         this.isAnalyzing = false;
         if (this.stockfish) { try { this.stockfish.postMessage('stop'); } catch (e) { console.warn(e); } }
         if (this.evalChart) { try { this.evalChart.destroy(); this.evalChart = null; } catch (e) { console.warn(e); } }
+        // NEW: Destroy visualizer board on stop (Task #9)
+        if (this.visualizerBoard) { try { this.visualizerBoard.destroy(); this.visualizerBoard = null; } catch(e) { console.warn(e); }}
         if(this.reviewSummaryContainer) this.reviewSummaryContainer.addClass('hidden');
         if(this.assessmentDetailsElement) this.assessmentDetailsElement.addClass('hidden');
         
-        // Cleanup all namespaced event listeners
         $(document).off('keydown.analysis');
         $(document).off('mouseup.analysis_draw');
 
@@ -256,25 +295,36 @@ window.AnalysisController = {
             return;
         }
         this.isAnalyzing = true;
-        const progressIndicator = $('<div class="text-center p-4 bg-blue-700 text-white rounded-lg mb-4">Starting Analysis...</div>');
-        this.reviewSummaryContainer.parent().prepend(progressIndicator);
         
         try {
-            this.moveListElement.html('<div class="text-center text-gray-400 p-4">Analyzing moves...</div>');
             let tempGame = new Chess();
             let opponentCpl = 0;
 
             for (let i = 0; i < this.gameHistory.length && this.isAnalyzing; i++) {
                 const move = this.gameHistory[i];
-                progressIndicator.text(`Analyzing move ${i + 1} of ${this.gameHistory.length}...`);
-                const positionEval = await this.getStaticEvaluation(tempGame.fen());
+                const progressPercent = ((i + 1) / this.gameHistory.length) * 100;
+
+                // Update visualizer (Task #9)
+                this.visualizerStatusElement.text(`Analyzing move ${i + 1} of ${this.gameHistory.length}...`);
+                this.visualizerProgressBar.css('width', `${progressPercent}%`);
+                this.visualizerBoard.position(tempGame.fen());
+                
+                const positionEval = await this.getStaticEvaluation(tempGame.fen(), i);
                 const evalBeforeMove = (move.color === 'w') ? positionEval.best : -positionEval.best;
+                
                 tempGame.move(move.san);
-                const evalAfterMove = await this.getStaticEvaluation(tempGame.fen());
+                
+                const evalAfterMove = await this.getStaticEvaluation(tempGame.fen(), i + 1);
                 const evalAfterFromPlayerPerspective = (move.color === 'w') ? evalAfterMove.best : -evalAfterMove.best;
                 const cpl = Math.max(0, evalBeforeMove - evalAfterFromPlayerPerspective);
                 const bestMoveAdvantage = Math.abs(positionEval.best - positionEval.second);
                 const classification = this.classifyMove(cpl, opponentCpl, bestMoveAdvantage, tempGame.pgn());
+
+                // Update visualizer with move info (Task #9)
+                this.visualizerMoveNumberElement.text(`${Math.floor(i / 2) + 1}${move.color === 'w' ? '.' : '...'}`);
+                this.visualizerMovePlayedElement.text(move.san);
+                const classificationInfo = this.CLASSIFICATION_DATA[classification];
+                this.visualizerMoveAssessmentElement.text(classificationInfo.title).attr('class', `font-bold ${classificationInfo.color}`);
                 
                 const player = move.color;
                 if (this.moveCounts[player] && classification in this.moveCounts[player]) {
@@ -297,25 +347,24 @@ window.AnalysisController = {
             }
 
             if (this.isAnalyzing) {
-                try {
-                    this.calculateAccuracy();
-                    this.renderReviewSummary();
-                    this.renderFinalReview();
-                } catch (e) {
-                    this.showError(`Analysis failed during final rendering. Error: ${e.message}`);
-                } finally {
-                    progressIndicator.remove();
+                this.calculateAccuracy();
+                this.renderReviewSummary();
+                // Transition to the main analysis room (Task #9)
+                if (typeof switchToAnalysisRoom === 'function') {
+                    switchToAnalysisRoom();
+                } else {
+                    console.error('switchToAnalysisRoom function not found. Cannot display final report.');
                 }
+                this.renderFinalReview();
             }
         } catch (error) {
             this.showError(`Analysis failed during move review. Error: ${error.message}`);
-            progressIndicator.remove();
         } finally {
             this.isAnalyzing = false;
         }
     },
 
-    getStaticEvaluation: function(fen) {
+    getStaticEvaluation: function(fen, moveIndex) { // UPDATED: Accepts moveIndex for adaptive depth (Task #8)
         return new Promise((resolve) => {
             if (!this.stockfish || !this.isAnalyzing) return resolve({ best: 0, second: 0, best_pv: '' });
             
@@ -326,7 +375,7 @@ window.AnalysisController = {
                     this.stockfish.removeEventListener('message', onMessage);
                     resolve({ best: scores[1] || 0, second: scores[2] || 0, best_pv });
                 }
-            }, 5000);
+            }, 8000); // Increased timeout for deeper analysis
 
             const onMessage = (event) => {
                 if (!this.isAnalyzing) {
@@ -354,12 +403,15 @@ window.AnalysisController = {
                     resolve({ best: scores[1] || 0, second: scores[2] || scores[1] || 0, best_pv });
                 }
             };
+            
+            // UPDATED: Use adaptive depth (Task #8)
+            const depth = (moveIndex < this.ADAPTIVE_DEPTH.opening_ply) ? this.ADAPTIVE_DEPTH.opening : this.ADAPTIVE_DEPTH.endgame;
 
             try {
                 this.stockfish.addEventListener('message', onMessage);
                 this.stockfish.postMessage('setoption name MultiPV value 2');
                 this.stockfish.postMessage(`position fen ${fen}`);
-                this.stockfish.postMessage(`go depth ${this.REVIEW_DEPTH}`);
+                this.stockfish.postMessage(`go depth ${depth}`);
             } catch (error) {
                 clearTimeout(timeout);
                 resolve({ best: 0, second: 0, best_pv: '' });
@@ -368,7 +420,9 @@ window.AnalysisController = {
     },
     
     classifyMove: function(cpl, opponentCpl, bestMoveAdvantage, pgn) {
-        if (OPENINGS && OPENINGS.some && OPENINGS.some(o => pgn.trim().startsWith(o.pgn))) return 'Book';
+        // Find if the move is a book move, but only for the first few moves
+        const pgnParts = pgn.split(' ').filter(p => p.includes('.')).length;
+        if (pgnParts <= 10 && OPENINGS && OPENINGS.some && OPENINGS.some(o => pgn.trim().startsWith(o.pgn))) return 'Book';
         if (opponentCpl > 150 && cpl > 70) return 'Miss';
         if (cpl < 10 && bestMoveAdvantage > 250) return 'Brilliant';
         if (cpl < 10 && bestMoveAdvantage > 100) return 'Great';
@@ -384,7 +438,8 @@ window.AnalysisController = {
         const calculate = (cpl_array) => {
             if (cpl_array.length === 0) return 100;
             const avg_cpl = cpl_array.reduce((a, b) => a + b, 0) / cpl_array.length;
-            return Math.round(103.16 * Math.exp(-0.04354 * avg_cpl));
+            // Formula from Lichess Game Analysis
+            return Math.max(0, Math.min(100, Math.round(103.16 * Math.exp(-0.04354 * avg_cpl))));
         };
         this.accuracy.w = calculate(this.cpl.w);
         this.accuracy.b = calculate(this.cpl.b);
@@ -416,7 +471,7 @@ window.AnalysisController = {
     navigateToMove: function(moveIndex) {
         if (moveIndex < 0 || moveIndex >= this.gameHistory.length) return;
         
-        this.clearUserShapes(); // Clear old drawings before showing new position
+        this.clearUserShapes();
         
         this.currentMoveIndex = moveIndex;
         const tempGame = new Chess();
@@ -426,20 +481,8 @@ window.AnalysisController = {
         this.moveListElement.find('.current-move-analysis').removeClass('current-move-analysis');
         this.moveListElement.find(`[data-move-index="${moveIndex}"]`).addClass('current-move-analysis');
         
-        const data = this.reviewData[moveIndex];
-        const move = this.gameHistory[moveIndex];
-        if (data && move) {
-            // Draw engine-suggested arrows
-            this.drawArrow(move.from, move.to, 'rgba(59, 130, 246, 0.7)'); // Blue for played move
-            if (data.bestLineUci) {
-                const bestMoveUci = data.bestLineUci.split(' ')[0];
-                const from = bestMoveUci.substring(0, 2);
-                const to = bestMoveUci.substring(2, 4);
-                if (from !== move.from || to !== move.to) {
-                    this.drawArrow(from, to, 'rgba(42, 122, 42, 0.7)'); // Green for best move
-                }
-            }
-        }
+        // This redraws engine arrows for the current move
+        this.redrawUserShapes();
         
         this.showMoveAssessmentDetails(moveIndex);
     },
@@ -505,7 +548,7 @@ window.AnalysisController = {
         try {
             if (this.evalChart) this.evalChart.destroy();
             const labels = ['Start'];
-            const data = [20];
+            const data = [20]; // Starting eval, slightly favors white
             this.reviewData.forEach((item, index) => {
                 const moveNum = Math.floor(index / 2) + 1;
                 const isWhite = index % 2 === 0;
@@ -568,34 +611,34 @@ window.AnalysisController = {
         } catch (error) { console.warn('Error rendering coordinates:', error); }
     },
 
-    // --- NEW: User Shape Drawing Functions for Analysis ---
     clearUserShapes: function() {
         this.userShapes = [];
         this.redrawUserShapes();
     },
 
     redrawUserShapes: function() {
+        if (!this.analysisBoardSvgOverlay) return;
         this.analysisBoardSvgOverlay.empty();
-        this.analysisBoardElement.find('.square-55d63').removeClass('highlight-user-green highlight-user-red highlight-user-yellow highlight-user-blue');
+        if (this.analysisBoardElement) {
+            this.analysisBoardElement.find('.square-55d63').removeClass('highlight-user-green highlight-user-red highlight-user-yellow highlight-user-blue');
+        }
         
         if (!this.analysisBoard) return;
         
-        // Redraw engine arrows first, then user shapes on top
         const data = this.reviewData[this.currentMoveIndex];
         const move = this.gameHistory[this.currentMoveIndex];
         if (data && move) {
-            this.drawArrow(move.from, move.to, 'rgba(59, 130, 246, 0.7)'); // Blue for played move
+            this.drawArrow(move.from, move.to, 'rgba(59, 130, 246, 0.7)');
             if (data.bestLineUci) {
                 const bestMoveUci = data.bestLineUci.split(' ')[0];
                 const from = bestMoveUci.substring(0, 2);
                 const to = bestMoveUci.substring(2, 4);
                 if (from !== move.from || to !== move.to) {
-                    this.drawArrow(from, to, 'rgba(42, 122, 42, 0.7)'); // Green for best move
+                    this.drawArrow(from, to, 'rgba(42, 122, 42, 0.7)');
                 }
             }
         }
         
-        // Redraw all stored user shapes
         this.userShapes.forEach(shape => {
             if (shape.type === 'highlight') {
                 this.analysisBoardElement.find(`.square-${shape.square}`).addClass(`highlight-user-${shape.color}`);
