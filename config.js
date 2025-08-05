@@ -1,612 +1,252 @@
-/**
- * analysis.js
- *
- * Manages all functionality for the post-game analysis room.
- */
+// ===================================================================================
+//  CONFIG.JS
+//  Central configuration and settings for the chess application.
+// ===================================================================================
 
-window.AnalysisController = {
-    // --- UI Element References ---
-    moveListElement: null,
-    evalChartCanvas: null,
-    assessmentDetailsElement: null,
-    assessmentTitleElement: null,
-    assessmentCommentElement: null,
-    analysisBoard: null,
-    analysisBoardElement: null,
-    boardWrapper: null,
-    reviewSummaryContainer: null,
-    whiteAccuracyElement: null,
-    blackAccuracyElement: null,
-    moveCountsContainer: null,
-    retryMistakeBtn: null,
-    bestLineDisplay: null,
-    bestLineMoves: null,
-    analysisBoardSvgOverlay: null,
-
-    // --- State Variables ---
-    stockfish: null,
-    analysisGame: new Chess(),
-    gameHistory: [],
-    reviewData: [],
-    evalChart: null,
-    currentMoveIndex: -1,
-    isAnalyzing: false,
-    accuracy: { w: 0, b: 0 },
-    moveCounts: { w: {}, b: {} },
-    cpl: { w: [], b: [] },
-
-    // --- Constants ---
-    CLASSIFICATION_DATA: {
-        'Brilliant': { title: 'Brilliant', comment: 'A great sacrifice or the only good move in a critical position!', color: 'text-teal-400', icon: '!!' },
-        'Great': { title: 'Great Move', comment: 'Finds the only good move in a complex position.', color: 'text-sky-300', icon: '!' },
-        'Best': { title: 'Best Move', comment: 'The strongest move, according to the engine.', color: 'text-amber-300', icon: '★' },
-        'Excellent': { title: 'Excellent', comment: 'A strong move that maintains the position\'s potential.', color: 'text-sky-400', icon: '✓' },
-        'Good': { title: 'Good', comment: 'A solid, decent move.', color: 'text-green-400', icon: '👍' },
-        'Book': { title: 'Book Move', comment: 'A standard opening move from theory.', color: 'text-gray-400', icon: '📖' },
-        'Inaccuracy': { title: 'Inaccuracy', comment: 'This move weakens your position slightly.', color: 'text-yellow-500', icon: '?!' },
-        'Mistake': { title: 'Mistake', comment: 'A significant error that damages your position.', color: 'text-orange-500', icon: '?' },
-        'Blunder': { title: 'Blunder', comment: 'A very bad move that could lead to losing the game.', color: 'text-red-600', icon: '??' },
-        'Miss': { title: 'Missed Opportunity', comment: 'Your opponent made a mistake, but you missed the best punishment.', color: 'text-purple-400', icon: '...' }
-    },
-    REVIEW_DEPTH: 14,
-
-    /**
-     * Entry point called by script.js to start the analysis mode.
-     */
-    init: function() {
-        console.log('AnalysisController: Initializing...');
-        
-        const gameData = window.gameDataToAnalyze;
-        if (!gameData || !gameData.stockfish || !gameData.pgn) {
-            this.showError("Game data is missing or incomplete for analysis.");
-            return;
-        }
-
-        try {
-            this.stockfish = gameData.stockfish;
-            this.analysisGame = new Chess();
-            this.analysisGame.load_pgn(gameData.pgn);
-            this.gameHistory = this.analysisGame.history({ verbose: true });
-            this.reviewData = [];
-            this.currentMoveIndex = -1;
-            this.isAnalyzing = false;
-
-            this.accuracy = { w: 0, b: 0 };
-            this.cpl = { w: [], b: [] };
-            this.moveCounts = { w: {}, b: {} };
-            for (const key in this.CLASSIFICATION_DATA) {
-                this.moveCounts.w[key] = 0;
-                this.moveCounts.b[key] = 0;
-            }
-
-            this.moveListElement = $('#ar-analysis-move-list');
-            this.evalChartCanvas = $('#ar-eval-chart');
-            this.assessmentDetailsElement = $('#ar-move-assessment-details');
-            this.assessmentTitleElement = $('#ar-assessment-title');
-            this.assessmentCommentElement = $('#ar-assessment-comment');
-            this.boardWrapper = $('#analysis-room .board-wrapper');
-            this.reviewSummaryContainer = $('#review-summary-container');
-            this.whiteAccuracyElement = $('#ar-white-accuracy');
-            this.blackAccuracyElement = $('#ar-black-accuracy');
-            this.moveCountsContainer = $('#ar-move-counts');
-            this.retryMistakeBtn = $('#ar-retry-mistake-btn');
-            this.bestLineDisplay = $('#ar-best-line-display');
-            this.bestLineMoves = $('#ar-best-line-moves');
-            this.analysisBoardSvgOverlay = $('#analysis-board-svg-overlay');
-            this.analysisBoardElement = $('#analysis-board');
-            
-            this.initializeBoard();
-            this.setupEventHandlers();
-            this.runGameReview();
-            
-        } catch (error) {
-            console.error('AnalysisController: Error during initialization:', error);
-            this.showError("Failed to initialize analysis system.");
+const UI_THEMES = [
+    {
+        name: 'charcoal',
+        displayName: 'Charcoal 숯',
+        colors: {
+            '--bg-main': '#262522',
+            '--bg-panel': '#312e2b',
+            '--text-light': '#f5f5f4',
+            '--text-dark': '#a8a29e',
+            '--border': '#57534e',
+            '--btn-primary-bg': '#2563eb',
+            '--btn-primary-hover': '#1d4ed8',
+            '--btn-secondary-bg': '#57534e',
+            '--btn-secondary-hover': '#44403c',
         }
     },
-
-    initializeBoard: function() {
-        try {
-            const boardConfig = {
-                position: 'start',
-                pieceTheme: PIECE_THEMES[localStorage.getItem('chessPieceTheme') || 'cburnett'],
-                draggable: false,
-                showNotation: false
-            };
-            if (this.analysisBoard && typeof this.analysisBoard.destroy === 'function') {
-                this.analysisBoard.destroy();
-            }
-            this.analysisBoard = Chessboard('analysis-board', boardConfig);
-            this.applyTheme();
-            this.renderCoordinates();
-        } catch (error) {
-            console.error('AnalysisController: Error initializing board:', error);
-            this.showError("Failed to initialize analysis board.");
+    {
+        name: 'midnight',
+        displayName: 'Midnight 🌃',
+        colors: {
+            '--bg-main': '#1e293b',
+            '--bg-panel': '#334155',
+            '--text-light': '#f1f5f9',
+            '--text-dark': '#94a3b8',
+            '--border': '#475569',
+            '--btn-primary-bg': '#be123c',
+            '--btn-primary-hover': '#9f1239',
+            '--btn-secondary-bg': '#475569',
+            '--btn-secondary-hover': '#334155',
         }
     },
-    
-    setupEventHandlers: function() {
-        this.moveListElement.off('click').on('click', '.analysis-move-item', (e) => {
-            const moveIndex = parseInt($(e.currentTarget).data('move-index'));
-            if (!isNaN(moveIndex) && moveIndex >= 0 && moveIndex < this.gameHistory.length) {
-                this.navigateToMove(moveIndex);
-            }
-        });
-
-        this.retryMistakeBtn.off('click').on('click', () => {
-            if (this.currentMoveIndex < 0) return;
-            const tempGame = new Chess();
-            for (let i = 0; i < this.currentMoveIndex; i++) {
-                tempGame.move(this.gameHistory[i].san);
-            }
-            const fen = tempGame.fen();
-            window.loadFenOnReturn = fen;
-            switchToMainGame();
-        });
-    },
-
-    showError: function(message) {
-        if (typeof Swal !== 'undefined') {
-            Swal.fire({
-                title: 'Analysis Error',
-                text: message,
-                icon: 'error',
-                confirmButtonText: 'Return to Game'
-            }).then(() => {
-                if (typeof switchToMainGame === 'function') {
-                    switchToMainGame();
-                } else {
-                    $('#return-to-game-btn').click();
-                }
-            });
-        } else {
-            alert('Analysis Error: ' + message);
+    {
+        name: 'forest',
+        displayName: 'Forest 🌲',
+        colors: {
+            '--bg-main': '#1a2e24',
+            '--bg-panel': '#224030',
+            '--text-light': '#e8f5e9',
+            '--text-dark': '#a5d6a7',
+            '--border': '#388e3c',
+            '--btn-primary-bg': '#f59e0b',
+            '--btn-primary-hover': '#d97706',
+            '--btn-secondary-bg': '#388e3c',
+            '--btn-secondary-hover': '#2e7d32',
         }
     },
-
-    stop: function() {
-        console.log('AnalysisController: Stopping analysis...');
-        this.isAnalyzing = false;
-        if (this.stockfish) { try { this.stockfish.postMessage('stop'); } catch (e) { console.warn(e); } }
-        if (this.evalChart) { try { this.evalChart.destroy(); this.evalChart = null; } catch (e) { console.warn(e); } }
-        if(this.reviewSummaryContainer) this.reviewSummaryContainer.addClass('hidden');
-        if(this.assessmentDetailsElement) this.assessmentDetailsElement.addClass('hidden');
-        this.clearArrows();
-        this.reviewData = [];
-        this.currentMoveIndex = -1;
-    },
-
-    /** MODIFIED **/
-    // The core analysis loop has been updated for more accurate CPL and move classification.
-    runGameReview: async function() {
-        if (this.gameHistory.length === 0) {
-            this.showError("No moves to analyze.");
-            return;
-        }
-        this.isAnalyzing = true;
-        const progressIndicator = $('<div class="text-center p-4 bg-blue-700 text-white rounded-lg mb-4">Starting Analysis...</div>');
-        this.reviewSummaryContainer.parent().prepend(progressIndicator);
-        
-        try {
-            this.moveListElement.html('<div class="text-center text-gray-400 p-4">Analyzing moves...</div>');
-            let tempGame = new Chess();
-            let opponentCpl = 0; // Keep track of the opponent's CPL from the previous move.
-
-            for (let i = 0; i < this.gameHistory.length && this.isAnalyzing; i++) {
-                const move = this.gameHistory[i];
-                progressIndicator.text(`Analyzing move ${i + 1} of ${this.gameHistory.length}...`);
-                
-                // Get evaluation of the position *before* the current move is made.
-                const positionEval = await this.getStaticEvaluation(tempGame.fen());
-                
-                // Get the evaluation from the perspective of the player whose turn it is.
-                const evalBeforeMove = (move.color === 'w') ? positionEval.best : -positionEval.best;
-                
-                // Make the move in our temporary game instance.
-                tempGame.move(move.san);
-                
-                // Get evaluation of the position *after* the move.
-                const evalAfterMove = await this.getStaticEvaluation(tempGame.fen());
-                // The eval is from White's perspective, so we convert it to the perspective of the player who just moved.
-                const evalAfterFromPlayerPerspective = (move.color === 'w') ? evalAfterMove.best : -evalAfterMove.best;
-                
-                // Centipawn Loss (CPL) is the drop in evaluation from the best possible move. It's always positive.
-                const cpl = Math.max(0, evalBeforeMove - evalAfterFromPlayerPerspective);
-                
-                // Get the difference in quality between the best move and the second-best move.
-                const bestMoveAdvantage = Math.abs(positionEval.best - positionEval.second);
-                
-                const classification = this.classifyMove(cpl, opponentCpl, bestMoveAdvantage, tempGame.pgn());
-                
-                const player = move.color;
-                if (this.moveCounts[player] && classification in this.moveCounts[player]) {
-                    this.moveCounts[player][classification]++;
-                }
-                
-                // Only add positive CPL to the accuracy calculation.
-                if (cpl > 0) {
-                    this.cpl[player].push(Math.min(cpl, 350));
-                }
-
-                this.reviewData.push({
-                    move: move.san,
-                    score: evalAfterMove.best, // Store eval from White's perspective for the chart
-                    classification: classification,
-                    bestLineUci: positionEval.best_pv
-                });
-
-                opponentCpl = cpl; // The CPL of this move becomes the opponent's CPL for the next move.
-                await new Promise(resolve => setTimeout(resolve, 50)); // Tiny delay to keep UI responsive
-            }
-
-            if (this.isAnalyzing) {
-                try {
-                    console.log("Analysis loop finished. Calculating stats and rendering final review...");
-                    this.calculateAccuracy();
-                    this.renderReviewSummary();
-                    this.renderFinalReview();
-                    console.log("Analysis review rendered successfully.");
-                } catch (e) {
-                    console.error("An error occurred during the final analysis rendering step:", e);
-                    this.showError(`Analysis failed during final rendering. Error: ${e.message}`);
-                } finally {
-                    progressIndicator.remove();
-                }
-            }
-        } catch (error) {
-            console.error('AnalysisController: Error during analysis loop:', error);
-            this.showError(`Analysis failed during move review. Error: ${error.message}`);
-            progressIndicator.remove();
-        } finally {
-            this.isAnalyzing = false;
+    {
+        name: 'ocean',
+        displayName: 'Ocean 🌊',
+        colors: {
+            '--bg-main': '#0a2342',
+            '--bg-panel': '#1d4263',
+            '--text-light': '#e9f1f8',
+            '--text-dark': '#86a8c4',
+            '--border': '#2f5b82',
+            '--btn-primary-bg': '#ffbf00',
+            '--btn-primary-hover': '#e6a800',
+            '--btn-secondary-bg': '#2f5b82',
+            '--btn-secondary-hover': '#254e70',
         }
     },
-
-    getStaticEvaluation: function(fen) {
-        return new Promise((resolve) => {
-            if (!this.stockfish || !this.isAnalyzing) {
-                return resolve({ best: 0, second: 0, best_pv: '' });
-            }
-            
-            let scores = {};
-            let best_pv = '';
-            let bestMoveFound = false;
-
-            const timeout = setTimeout(() => {
-                if (!bestMoveFound) {
-                    console.warn(`Stockfish timeout on FEN: ${fen}`);
-                    this.stockfish.removeEventListener('message', onMessage);
-                    resolve({ best: scores[1] || 0, second: scores[2] || 0, best_pv });
-                }
-            }, 5000);
-
-            const onMessage = (event) => {
-                if (!this.isAnalyzing) {
-                    clearTimeout(timeout);
-                    this.stockfish.removeEventListener('message', onMessage);
-                    return resolve({ best: 0, second: 0, best_pv: '' });
-                }
-                const message = event.data;
-                const pvMatch = message.match(/multipv (\d+) .* pv (.+)/);
-                if (pvMatch) {
-                    const pvIndex = parseInt(pvMatch[1]);
-                    const scoreMatch = message.match(/score (cp|mate) (-?\d+)/);
-                    if (scoreMatch) {
-                        let score = parseInt(scoreMatch[2]);
-                        if (scoreMatch[1] === 'mate') {
-                           score = (score > 0 ? 1 : -1) * APP_CONFIG.MATE_SCORE;
-                        }
-                        scores[pvIndex] = score;
-                    }
-                    if (pvIndex === 1) best_pv = pvMatch[2];
-                }
-                if (message.startsWith('bestmove')) {
-                    bestMoveFound = true;
-                    clearTimeout(timeout);
-                    this.stockfish.removeEventListener('message', onMessage);
-                    try { this.stockfish.postMessage('setoption name MultiPV value 1'); } catch(e) { console.warn(e); }
-                    resolve({ best: scores[1] || 0, second: scores[2] || scores[1] || 0, best_pv });
-                }
-            };
-
-            try {
-                this.stockfish.addEventListener('message', onMessage);
-                this.stockfish.postMessage('setoption name MultiPV value 2');
-                this.stockfish.postMessage(`position fen ${fen}`);
-                this.stockfish.postMessage(`go depth ${this.REVIEW_DEPTH}`);
-            } catch (error) {
-                clearTimeout(timeout);
-                console.error('Error sending commands to stockfish:', error);
-                resolve({ best: 0, second: 0, best_pv: '' });
-            }
-        });
-    },
-    
-    /** MODIFIED **/
-    // This function now uses more context to provide smarter classifications.
-    classifyMove: function(cpl, opponentCpl, bestMoveAdvantage, pgn) {
-        if (OPENINGS && OPENINGS.some && OPENINGS.some(o => pgn.trim().startsWith(o.pgn))) return 'Book';
-        
-        // A 'Miss' is when the opponent blundered (high CPL) and we failed to capitalize (also a notable CPL).
-        if (opponentCpl > 150 && cpl > 70) return 'Miss';
-
-        // 'Brilliant' or 'Great' moves are the only good moves in a position (the next best move is much worse).
-        if (cpl < 10 && bestMoveAdvantage > 250) return 'Brilliant';
-        if (cpl < 10 && bestMoveAdvantage > 100) return 'Great';
-        
-        // Standard CPL classification
-        if (cpl >= 300) return 'Blunder';
-        if (cpl >= 120) return 'Mistake';
-        if (cpl >= 50) return 'Inaccuracy';
-        if (cpl < 10) return 'Best';
-        if (cpl < 30) return 'Excellent';
-        return 'Good';
-    },
-
-    calculateAccuracy: function() {
-        const calculate = (cpl_array) => {
-            if (cpl_array.length === 0) return 100;
-            const avg_cpl = cpl_array.reduce((a, b) => a + b, 0) / cpl_array.length;
-            // This is a standard formula for converting average CPL to a percentage accuracy.
-            return Math.round(103.16 * Math.exp(-0.04354 * avg_cpl));
-        };
-        this.accuracy.w = calculate(this.cpl.w);
-        this.accuracy.b = calculate(this.cpl.b);
-    },
-
-    renderReviewSummary: function() {
-        this.whiteAccuracyElement.text(this.accuracy.w + '%');
-        this.blackAccuracyElement.text(this.accuracy.b + '%');
-        let countsHtml = '';
-        const displayOrder = ['Brilliant', 'Great', 'Best', 'Miss', 'Blunder', 'Mistake', 'Inaccuracy'];
-        displayOrder.forEach(key => {
-            const w_count = this.moveCounts.w[key] || 0;
-            const b_count = this.moveCounts.b[key] || 0;
-            if (w_count > 0 || b_count > 0) {
-                const info = this.CLASSIFICATION_DATA[key];
-                countsHtml += `
-                    <div class="text-right">${w_count}</div>
-                    <div class="text-center font-bold ${info.color}" title="${info.title}">${info.icon} ${key}</div>
-                    <div class="text-left">${b_count}</div>`;
-            }
-        });
-        this.moveCountsContainer.html(countsHtml);
-        this.reviewSummaryContainer.removeClass('hidden');
-    },
-
-    renderFinalReview: function() {
-        this.renderReviewedMoveList();
-        this.drawEvalChart();
-        this.navigateToMove(this.gameHistory.length - 1);
-    },
-    
-    navigateToMove: function(moveIndex) {
-        if (moveIndex < 0 || moveIndex >= this.gameHistory.length) return;
-        this.currentMoveIndex = moveIndex;
-        const tempGame = new Chess();
-        for (let i = 0; i <= moveIndex; i++) tempGame.move(this.gameHistory[i].san);
-        if (this.analysisBoard) this.analysisBoard.position(tempGame.fen());
-        
-        this.moveListElement.find('.current-move-analysis').removeClass('current-move-analysis');
-        this.moveListElement.find(`[data-move-index="${moveIndex}"]`).addClass('current-move-analysis');
-        
-        this.clearArrows();
-        const data = this.reviewData[moveIndex];
-        const move = this.gameHistory[moveIndex];
-        if (data && move) {
-            this.drawArrow(move.from, move.to, 'rgba(59, 130, 246, 0.7)'); // Blue for played move
-            if (data.bestLineUci) {
-                const bestMoveUci = data.bestLineUci.split(' ')[0];
-                const from = bestMoveUci.substring(0, 2);
-                const to = bestMoveUci.substring(2, 4);
-                if (from !== move.from || to !== move.to) {
-                    this.drawArrow(from, to, 'rgba(42, 122, 42, 0.7)'); // Green for best move
-                }
-            }
-        }
-        
-        this.showMoveAssessmentDetails(moveIndex);
-    },
-
-    showMoveAssessmentDetails: function(moveIndex) {
-        const data = this.reviewData[moveIndex];
-        if (!data) return;
-        const info = this.CLASSIFICATION_DATA[data.classification];
-        if (info) {
-            this.assessmentTitleElement.text(info.title).attr('class', `text-lg font-bold ${info.color}`);
-            this.assessmentCommentElement.text(info.comment);
-            this.assessmentDetailsElement.removeClass('hidden');
-            const isBadMove = data.classification === 'Mistake' || data.classification === 'Blunder';
-            this.retryMistakeBtn.toggleClass('hidden', !isBadMove);
-            if (data.bestLineUci && ['Mistake', 'Blunder', 'Inaccuracy', 'Miss'].includes(data.classification)) {
-                const tempGame = new Chess();
-                for(let i=0; i < moveIndex; i++) tempGame.move(this.gameHistory[i].san);
-                const sanLine = this.uciToSanLine(tempGame.fen(), data.bestLineUci);
-                this.bestLineMoves.text(sanLine);
-                this.bestLineDisplay.removeClass('hidden');
-            } else {
-                this.bestLineDisplay.addClass('hidden');
-            }
+    {
+        name: 'sunset',
+        displayName: 'Sunset 🌇',
+        colors: {
+            '--bg-main': '#2d182e',
+            '--bg-panel': '#48244e',
+            '--text-light': '#f2e8f1',
+            '--text-dark': '#c8a8c4',
+            '--border': '#704276',
+            '--btn-primary-bg': '#e66b4d',
+            '--btn-primary-hover': '#cc5c42',
+            '--btn-secondary-bg': '#704276',
+            '--btn-secondary-hover': '#5e3a64',
         }
     },
-    
-    uciToSanLine: function(fen, uciLine) {
-        try {
-            const tempGame = new Chess(fen);
-            const moves = uciLine.split(' ');
-            let sanMoves = [];
-            for (let i = 0; i < Math.min(moves.length, 5); i++) {
-                const move = tempGame.move(moves[i], { sloppy: true });
-                if (move) sanMoves.push(move.san);
-                else break;
-            }
-            return sanMoves.join(' ');
-        } catch(e) {
-            console.error("Failed to convert UCI line to SAN:", e);
-            return uciLine;
+    {
+        name: 'retro',
+        displayName: 'Retro 💾',
+        colors: {
+            '--bg-main': '#212121',
+            '--bg-panel': '#363636',
+            '--text-light': '#f0f0f0',
+            '--text-dark': '#b0b0b0',
+            '--border': '#555555',
+            '--btn-primary-bg': '#00ff00',
+            '--btn-primary-hover': '#00cc00',
+            '--btn-secondary-bg': '#555555',
+            '--btn-secondary-hover': '#404040',
         }
     },
-    
-    renderReviewedMoveList: function() {
-        if (!this.moveListElement) return;
-        let html = '';
-        for (let i = 0; i < this.gameHistory.length; i++) {
-            const moveNum = Math.floor(i / 2) + 1;
-            const move = this.gameHistory[i];
-            const review = this.reviewData[i];
-            if (!review) continue;
-            const info = this.CLASSIFICATION_DATA[review.classification];
-            html += `<div class="analysis-move-item flex items-center gap-3" data-move-index="${i}" title="${info.title}">`;
-            if (move.color === 'w') {
-                html += `<span class="w-8 text-right font-bold text-dark">${moveNum}.</span>`;
-            } else {
-                html += `<span class="w-8"></span>`;
-            }
-            html += `<span class="flex-grow font-mono">${move.san}</span>`;
-            html += `<span class="font-bold text-lg w-6 text-center ${info.color}">${info.icon}</span>`;
-            html += `</div>`;
-        }
-        this.moveListElement.html(html);
-    },
-
-    drawEvalChart: function() {
-        if (!this.evalChartCanvas || !this.evalChartCanvas.length) return;
-        try {
-            if (this.evalChart) this.evalChart.destroy();
-            const labels = ['Start'];
-            const data = [20]; // Standard starting eval from white's perspective
-            this.reviewData.forEach((item, index) => {
-                const moveNum = Math.floor(index / 2) + 1;
-                const isWhite = index % 2 === 0;
-                labels.push(`${moveNum}${isWhite ? '.' : '...'} ${item.move}`);
-                data.push(item.score);
-            });
-            const ctx = this.evalChartCanvas[0].getContext('2d');
-            this.evalChart = new Chart(ctx, {
-                type: 'line',
-                data: { labels, datasets: [{
-                    label: 'Position Evaluation', data,
-                    borderColor: 'rgba(200, 200, 200, 0.8)',
-                    backgroundColor: (context) => {
-                        const chart = context.chart;
-                        const {ctx, chartArea} = chart;
-                        if (!chartArea) return;
-                        const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-                        gradient.addColorStop(0.5, 'rgba(100, 100, 100, 0.2)');
-                        gradient.addColorStop(0.51, 'rgba(255, 255, 255, 0.3)');
-                        gradient.addColorStop(0.49, 'rgba(0, 0, 0, 0.3)');
-                        return gradient;
-                    },
-                    fill: { target: 'origin', above: 'rgba(255, 255, 255, 0.1)', below: 'rgba(0, 0, 0, 0.1)' },
-                    borderWidth: 2, pointRadius: 1, pointHoverRadius: 4, tension: 0.1
-                }]},
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    scales: {
-                        y: { 
-                            suggestedMin: -500, suggestedMax: 500,
-                            grid: { color: 'rgba(255,255,255,0.1)', zeroLineColor: 'rgba(255,255,255,0.4)' },
-                            ticks: { color: 'var(--text-dark)', callback: (v) => (v / 100).toFixed(1) }
-                        },
-                        x: { display: false }
-                    },
-                    plugins: { 
-                        legend: { display: false },
-                        tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', titleColor: 'white', bodyColor: 'white' }
-                    },
-                    interaction: { mode: 'index', intersect: false }
-                }
-            });
-        } catch (error) {
-            console.error('Error creating evaluation chart:', error);
+    {
+        name: 'high-contrast',
+        displayName: 'High Contrast 🌗',
+        colors: {
+            '--bg-main': '#000000',
+            '--bg-panel': '#333333',
+            '--text-light': '#ffffff',
+            '--text-dark': '#cccccc',
+            '--border': '#666666',
+            '--btn-primary-bg': '#ff0000',
+            '--btn-primary-hover': '#cc0000',
+            '--btn-secondary-bg': '#333333',
+            '--btn-secondary-hover': '#555555',
         }
     },
-    
-    applyTheme: function() {
-        try {
-            const themeName = localStorage.getItem('chessBoardTheme') || 'green';
-            const selectedTheme = THEMES && THEMES.find ? THEMES.find(t => t.name === themeName) : null;
-            if (selectedTheme) {
-                document.documentElement.style.setProperty('--light-square-color', selectedTheme.colors.light);
-                document.documentElement.style.setProperty('--dark-square-color', selectedTheme.colors.dark);
-            }
-        } catch (error) {
-            console.warn('Error applying theme:', error);
+    {
+        name: 'lavender',
+        displayName: 'Lavender 💜',
+        colors: {
+            '--bg-main': '#e6e6fa',
+            '--bg-panel': '#d8bfd8',
+            '--text-light': '#363062',
+            '--text-dark': '#6a5acd',
+            '--border': '#b099d4',
+            '--btn-primary-bg': '#8a2be2',
+            '--btn-primary-hover': '#7a1be1',
+            '--btn-secondary-bg': '#b099d4',
+            '--btn-secondary-hover': '#a188c9',
         }
     },
-
-    renderCoordinates: function() {
-        if (!this.boardWrapper || !this.boardWrapper.length) return;
-        try {
-            const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-            const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
-            const filesHtml = files.map(f => `<span>${f}</span>`).join('');
-            const ranksHtml = ranks.map(r => `<span>${r}</span>`).join('');
-            this.boardWrapper.find('#analysis-top-files').html(filesHtml);
-            this.boardWrapper.find('#analysis-bottom-files').html(filesHtml);
-            this.boardWrapper.find('#analysis-left-ranks').html(ranksHtml);
-            this.boardWrapper.find('#analysis-right-ranks').html(ranksHtml);
-        } catch (error) {
-            console.warn('Error rendering coordinates:', error);
+    {
+        name: 'mint',
+        displayName: 'Mint 🌱',
+        colors: {
+            '--bg-main': '#f0fff0',
+            '--bg-panel': '#c4d8c4',
+            '--text-light': '#2f4f4f',
+            '--text-dark': '#556b2f',
+            '--border': '#8fbc8f',
+            '--btn-primary-bg': '#3cb371',
+            '--btn-primary-hover': '#32a162',
+            '--btn-secondary-bg': '#8fbc8f',
+            '--btn-secondary-hover': '#7a9e7a',
         }
-    },
-
-    clearArrows: function() {
-        if (this.analysisBoardSvgOverlay) {
-            this.analysisBoardSvgOverlay.empty();
-        }
-    },
-
-    drawArrow: function(from, to, color = 'rgba(42, 122, 42, 0.7)') {
-        if (!this.analysisBoardSvgOverlay || !this.analysisBoard) return;
-        
-        const boardWidth = this.analysisBoardElement.width();
-        if (!boardWidth || boardWidth === 0) return; // Prevent drawing if board isn't visible
-        const squareSize = boardWidth / 8;
-        const isFlipped = this.analysisBoard.orientation() === 'black';
-
-        const getCoords = (square) => {
-            let col = square.charCodeAt(0) - 'a'.charCodeAt(0);
-            let row = parseInt(square.charAt(1)) - 1;
-            if (isFlipped) {
-                col = 7 - col;
-                row = 7 - row;
-            }
-            return {
-                x: col * squareSize + squareSize / 2,
-                y: (7 - row) * squareSize + squareSize / 2
-            };
-        };
-
-        const fromCoords = getCoords(from);
-        const toCoords = getCoords(to);
-
-        const markerId = `arrowhead-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
-        if (!this.analysisBoardSvgOverlay.find(`#${markerId}`).length) {
-            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-            marker.setAttribute('id', markerId);
-            marker.setAttribute('viewBox', '0 0 10 10');
-            marker.setAttribute('refX', '5');
-            marker.setAttribute('refY', '5');
-            marker.setAttribute('markerWidth', '3.5');
-            marker.setAttribute('markerHeight', '3.5');
-            marker.setAttribute('orient', 'auto-start-reverse');
-            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-            path.style.fill = color;
-            marker.appendChild(path);
-            this.analysisBoardSvgOverlay.append(marker);
-        }
-
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', fromCoords.x);
-        line.setAttribute('y1', fromCoords.y);
-        line.setAttribute('x2', toCoords.x);
-        line.setAttribute('y2', toCoords.y);
-        line.style.stroke = color;
-        line.style.strokeWidth = '14px';
-        line.setAttribute('marker-end', `url(#${markerId})`);
-        
-        this.analysisBoardSvgOverlay.append(line);
     }
+];
+
+const APP_CONFIG = {
+    STOCKFISH_URL: 'https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js',
+    DEFAULT_BOARD_THEME: 'green',
+    DEFAULT_PIECE_THEME: 'alpha',
+    MATE_SCORE: 10000
 };
+
+const THEMES = [
+    { name: 'green', displayName: 'Green 🟩', colors: { light: '#eaefd2', dark: '#769656' } },
+    { name: 'brown', displayName: 'Brown 🟫', colors: { light: '#f0d9b5', dark: '#b58863' } },
+    { name: 'blue',  displayName: 'Blue 🟦',  colors: { light: '#dee3e6', dark: '#8ca2ad' } },
+    { name: 'stone', displayName: 'Stone 🗿', colors: { light: '#d1d1d1', dark: '#a7a7a7' } }
+];
+
+const PIECE_THEMES = {
+    alpha: 'img/alpha/{piece}.png', anarcandy: 'img/anarcandy/{piece}.png', caliente: 'img/caliente/{piece}.png', 
+    california: 'img/california/{piece}.png', cardinal: 'img/cardinal/{piece}.png', cburnett: 'img/cburnett/{piece}.png', 
+    celtic: 'img/celtic/{piece}.png', chess7: 'img/chess7/{piece}.png', chessnut: 'img/chessnut/{piece}.png', 
+    companion: 'img/companion/{piece}.png', cooke: 'img/cooke/{piece}.png', dubrovny: 'img/dubrovny/{piece}.png', 
+    fantasy: 'img/fantasy/{piece}.png', firi: 'img/firi/{piece}.png', fresca: 'img/fresca/{piece}.png', 
+    gioco: 'img/gioco/{piece}.png', governor: 'img/governor/{piece}.png', horsey: 'img/horsey/{piece}.png', 
+    icpieces: 'img/icpieces/{piece}.png', kosal: 'img/kosal/{piece}.png', leipzig: 'img/leipzig/{piece}.png', 
+    letter: 'img/letter/{piece}.png', maestro: 'img/maestro/{piece}.png', merida: 'img/merida/{piece}.png', 
+    monarchy: 'img/monarchy/{piece}.png', mpchess: 'img/mpchess/{piece}.png', pirouetti: 'img/pirouetti/{piece}.png', 
+    pixel: 'img/pixel/{piece}.png', reillycraig: 'img/reillycraig/{piece}.png', rhosgfx: 'img/rhosgfx/{piece}.png', 
+    riohacha: 'img/riohacha/{piece}.png', shapes: 'img/shapes/{piece}.png', spatial: 'img/spatial/{piece}.png', 
+    staunty: 'img/staunty/{piece}.png', tatiana: 'img/tatiana/{piece}.png', wikipedia: 'img/wikipedia/{piece}.png', 
+    xkcd: 'img/xkcd/{piece}.png'
+};
+
+const DIFFICULTY_SETTINGS = {
+    1: { elo: 450,  type: 'random' },
+    2: { elo: 650,  type: 'greedy' },
+    3: { elo: 850,  type: 'stockfish', depth: 2 },
+    4: { elo: 1000, type: 'stockfish', depth: 4 },
+    5: { elo: 1200, type: 'stockfish', depth: 6 },
+    6: { elo: 1400, type: 'stockfish', depth: 8 },
+    7: { elo: 1600, type: 'stockfish', movetime: 500 },
+    8: { elo: 1800, type: 'stockfish', movetime: 800 },
+    9: { elo: 2000, type: 'stockfish', movetime: 1200 },
+    10: { elo: 2200, type: 'stockfish', movetime: 1600 },
+    11: { elo: 2400, type: 'stockfish', movetime: 2000 },
+    12: { elo: 2700, type: 'stockfish', movetime: 2500 }
+};
+
+const MATERIAL_POINTS = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+
+const SOUND_PATHS = {
+    'moveSelf': 'sounds/move-self.mp3',
+    'capture': 'sounds/capture.mp3',
+    'check': 'sounds/move-check.mp3',
+    'gameEnd': 'sounds/game-end.mp3',
+    'gameStart': 'sounds/game-start.mp3',
+    'castle': 'sounds/castle.mp3',
+    'promote': 'sounds/promote.mp3',
+    'notify': 'sounds/notify.mp3'
+};
+
+/** MODIFIED **/
+// This list has been greatly expanded to recognize a wider variety of chess openings.
+const OPENINGS = [
+    { pgn: "1. e4", name: "King's Pawn Opening" },
+    { pgn: "1. d4", name: "Queen's Pawn Opening" },
+    { pgn: "1. c4", name: "English Opening" },
+    { pgn: "1. Nf3", name: "Réti Opening" },
+    { pgn: "1. f4", name: "Bird's Opening" },
+    { pgn: "1. b3", name: "Larsen's Opening" },
+    { pgn: "1. g3", name: "King's Fianchetto Opening" },
+    { pgn: "1. e4 e5", name: "King's Pawn Game" },
+    { pgn: "1. e4 e5 2. Nf3", name: "King's Knight Opening" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6", name: "Open Game" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bb5", name: "Ruy López" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bc4", name: "Italian Game" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5", name: "Giuoco Piano" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6", name: "Two Knights Defense" },
+    { pgn: "1. e4 e5 2. Nf3 Nc6 3. d4", name: "Scotch Game" },
+    { pgn: "1. e4 e5 2. Nf3 d6", name: "Philidor Defense" },
+    { pgn: "1. e4 e5 2. Nf3 Nf6", name: "Petrov's Defense" },
+    { pgn: "1. e4 e5 2. f4", name: "King's Gambit" },
+    { pgn: "1. e4 c5", name: "Sicilian Defense" },
+    { pgn: "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6", name: "Sicilian Defense: Najdorf Variation" },
+    { pgn: "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 g6", name: "Sicilian Defense: Dragon Variation" },
+    { pgn: "1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 e6", name: "Sicilian Defense: Scheveningen Variation" },
+    { pgn: "1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 e5", name: "Sicilian Defense: Sveshnikov Variation" },
+    { pgn: "1. e4 c6", name: "Caro-Kann Defense" },
+    { pgn: "1. e4 e6", name: "French Defense" },
+    { pgn: "1. e4 d5", name: "Scandinavian Defense" },
+    { pgn: "1. e4 Nf6", name: "Alekhine's Defense" },
+    { pgn: "1. e4 d6", name: "Pirc Defense" },
+    { pgn: "1. e4 g6", name: "Modern Defense" },
+    { pgn: "1. d4 d5", name: "Queen's Pawn Game" },
+    { pgn: "1. d4 d5 2. c4", name: "Queen's Gambit" },
+    { pgn: "1. d4 d5 2. c4 e6", name: "Queen's Gambit Declined (QGD)" },
+    { pgn: "1. d4 d5 2. c4 dxc4", name: "Queen's Gambit Accepted (QGA)" },
+    { pgn: "1. d4 d5 2. c4 c6", name: "Slav Defense" },
+    { pgn: "1. d4 d5 2. c4 c6 3. Nf3 Nf6 4. Nc3 dxc4", name: "Slav Defense: Accepted" },
+    { pgn: "1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. cxd5 exd5 5. Bg5", name: "QGD: Exchange Variation" },
+    { pgn: "1. d4 Nf6", name: "Indian Defense" },
+    { pgn: "1. d4 Nf6 2. c4", name: "Indian Game" },
+    { pgn: "1. d4 Nf6 2. c4 e6 3. Nc3 Bb4", name: "Nimzo-Indian Defense" },
+    { pgn: "1. d4 Nf6 2. c4 e6 3. Nf3 b6", name: "Queen's Indian Defense" },
+    { pgn: "1. d4 Nf6 2. c4 g6 3. Nc3 Bg7", name: "King's Indian Defense (KID)" },
+    { pgn: "1. d4 Nf6 2. c4 g6 3. Nc3 d5", name: "Grünfeld Defense" },
+    { pgn: "1. d4 f5", name: "Dutch Defense" },
+    { pgn: "1. d4 e5", name: "Englund Gambit" },
+    { pgn: "1. c4 e5", name: "English Opening: King's English Variation" },
+    { pgn: "1. c4 Nf6", name: "English Opening: Anglo-Indian Defense" },
+    { pgn: "1. Nf3 d5", name: "Réti Opening: Main Line" }
+];
