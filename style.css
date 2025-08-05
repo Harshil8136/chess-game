@@ -50,18 +50,18 @@ aside { background-color: var(--bg-panel); }
 div[data-square] {
     position: relative;
 }
-/* This creates the red dot for threatened pieces and ENSURES IT IS NOT CLICKABLE */
-.threatened-square::after {
-    content: '';
-    position: absolute;
-    top: 10%;
-    right: 10%;
-    width: 15%;
-    height: 15%;
-    border-radius: 50%;
-    background: radial-gradient(rgba(255, 20, 20, 0.8), transparent 70%);
-    pointer-events: none; /* This is the critical fix */
+
+/* UPDATED: Threat highlighting now uses a background gradient layer, which does not interfere with mouse events. */
+.threatened-square {
+    background:
+        radial-gradient(rgba(255, 20, 20, 0.7) 15%, transparent 16%) top 10% right 10% / 15% 15% no-repeat,
+        var(--square-bg-color, transparent); /* Fallback to existing background */
 }
+/* Helper classes to store the original background color for the threatened-square gradient to layer on top of */
+.white-1e1d7 { --square-bg-color: var(--light-square-color); background-color: var(--light-square-color) !important; }
+.black-3c85d { --square-bg-color: var(--dark-square-color); background-color: var(--dark-square-color) !important; }
+
+
 .board-svg-overlay {
     grid-column: 2;
     grid-row: 2;
@@ -71,6 +71,22 @@ div[data-square] {
     overflow: visible;
 }
 .move-history-grid > span { text-align: center; } /* This helps align moves correctly */
+
+/* Styles for Focus Mode. Applied to the body tag via JS. */
+.focus-mode #main-game aside {
+    display: none;
+}
+@media (min-width: 1024px) {
+    .focus-mode #main-game {
+        justify-content: center;
+    }
+}
+
+/* Styles for user-drawn highlights. Applied directly to the square div. */
+.highlight-user-green { background-color: rgba(21, 128, 61, 0.5) !important; }
+.highlight-user-red { background-color: rgba(185, 28, 28, 0.5) !important; }
+.highlight-user-yellow { background-color: rgba(217, 119, 6, 0.5) !important; }
+.highlight-user-blue { background-color: rgba(37, 99, 235, 0.5) !important; }
 
 /* Styles for click-to-move highlighting */
 .highlight-selected {
@@ -91,8 +107,6 @@ div[data-square] {
 
 /* Unchanged utility styles */
 #board, #analysis-board { box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
-.white-1e1d7 { background-color: var(--light-square-color) !important; }
-.black-3c85d { background-color: var(--dark-square-color) !important; }
 .captured-piece { width: 28px; height: 28px; margin: 2px; }
 .thinking-animation { animation:pulse 1.5s ease-in-out infinite; } @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
 .board-wrapper { display: grid; grid-template-columns: 24px 1fr 24px; grid-template-rows: 24px 1fr 24px; justify-items: center; align-items: center; gap: 4px; }
@@ -115,9 +129,33 @@ div[data-square] {
 .analysis-move-item:hover { background-color: #504d49; }
 .premove-highlight { background-color: rgba(255, 165, 0, 0.7) !important; }
 .hidden { display: none !important; }
+
+/* Styles for Debug Log */
+#log-box-container {
+    background-color: var(--bg-panel); /* Ensure solid background */
+}
 #log-box-content .log-message { border-bottom: 1px solid #44403c; padding: 2px 0; }
 #log-box-content .log-error { color: #f87171; }
 #log-box-content .log-warn { color: #facc15; }
+/* NEW: Style for the resize handle */
+#log-box-resize-handle {
+    /* Creates a visual gripper icon using gradients */
+    background-image:
+      linear-gradient(135deg, var(--border) 25%, transparent 25%),
+      linear-gradient(225deg, var(--border) 25%, transparent 25%),
+      linear-gradient(315deg, var(--border) 25%, transparent 25%),
+      linear-gradient(45deg, var(--border) 25%, transparent 25%);
+    background-size: 8px 8px;
+    background-position: bottom 1px right 1px;
+    background-repeat: no-repeat;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+#log-box-resize-handle:hover {
+    opacity: 1;
+}
+
+
 .move-history-grid { display: grid; grid-template-columns: 2.5rem 1fr 1fr; gap: 4px 8px; align-items: center; }
 ::-webkit-scrollbar { width: 12px; }
 ::-webkit-scrollbar-track { background: #3c3a37; border-radius: 10px; }
