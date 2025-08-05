@@ -29,7 +29,6 @@
             --btn-secondary-hover: #44403c;
         }
 
-        /** MODIFIED **/
         /* Prevents the main page from scrolling on larger screens */
         html, body {
             height: 100%;
@@ -61,7 +60,6 @@
         .top-action-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .top-action-icon-btn img { width: 20px; height: 20px; filter: invert(0.9); }
         
-        /** NEW **/
         /* This ensures squares can contain pseudo-elements for highlighting */
         div[data-square] {
             position: relative;
@@ -87,6 +85,24 @@
             overflow: visible;
         }
         .move-history-grid > span { text-align: center; } /* This helps align moves correctly */
+
+        /** NEW **/
+        /* Styles for click-to-move highlighting */
+        .highlight-selected {
+            background-color: rgba(45, 156, 219, 0.5) !important;
+        }
+        .highlight-legal::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30%;
+            height: 30%;
+            border-radius: 50%;
+            background: radial-gradient(rgba(20, 83, 45, 0.5), transparent 70%);
+            pointer-events: none;
+        }
 
         /* Unchanged utility styles */
         #board, #analysis-board { box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
@@ -188,8 +204,8 @@
                         <div id="move-history-log" class="flex-grow overflow-y-auto p-2"></div>
                     </div>
                     <div class="grid grid-cols-2 gap-2 flex-shrink-0">
-                         <button id="swap-sides-button" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Swap Sides</button>
-                         <button id="export-pgn-btn" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Export PGN</button>
+                          <button id="swap-sides-button" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Swap Sides</button>
+                          <button id="export-pgn-btn" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Export PGN</button>
                     </div>
                 </div>
                 
@@ -199,13 +215,13 @@
                          <div class="text-center">
                             <p id="summary-opening-name" class="text-sm text-dark">Opening: ---</p>
                             <p id="summary-final-material" class="text-sm text-dark">Final Material: ---</p>
-                        </div>
+                         </div>
                          <div id="summary-accuracy" class="flex justify-around text-center">
-                            <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
-                            <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
+                             <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
+                             <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
                          </div>
                          <div id="summary-move-counts" class="grid grid-cols-3 gap-2 text-center">
-                             <span class="col-span-3 text-sm text-dark italic">Run full review for move breakdown.</span>
+                              <span class="col-span-3 text-sm text-dark italic">Run full review for move breakdown.</span>
                          </div>
                     </div>
                     <div class="flex-grow flex items-center justify-center">
@@ -223,16 +239,16 @@
                         <input type="range" id="difficulty-slider" min="1" max="12" value="4" step="1" class="w-full"/>
                     </div>
                     <div class="flex justify-between items-center">
-                         <label for="ui-theme-selector" class="font-bold text-lg">UI Theme</label>
-                         <select id="ui-theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
+                          <label for="ui-theme-selector" class="font-bold text-lg">UI Theme</label>
+                          <select id="ui-theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
                     </div>
                     <div class="flex justify-between items-center">
-                         <label for="theme-selector" class="font-bold text-lg">Board Theme</label>
-                         <select id="theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
+                          <label for="theme-selector" class="font-bold text-lg">Board Theme</label>
+                          <select id="theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
                     </div>
                     <div class="flex justify-between items-center">
-                         <label for="piece-theme-selector" class="font-bold text-lg">Piece Theme</label>
-                         <select id="piece-theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
+                          <label for="piece-theme-selector" class="font-bold text-lg">Piece Theme</label>
+                          <select id="piece-theme-selector" class="w-48 p-2 rounded-md themed-select"></select>
                     </div>
                     <div class="flex justify-between items-center">
                         <label for="threats-toggle" class="font-bold text-lg">Highlight Threats</label>
