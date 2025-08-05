@@ -86,7 +86,22 @@
         }
         .move-history-grid > span { text-align: center; } /* This helps align moves correctly */
 
-        /** NEW **/
+        /* NEW: Styles for Focus Mode. Applied to the body tag via JS. */
+        .focus-mode #main-game aside {
+            display: none;
+        }
+        @media (min-width: 1024px) {
+            .focus-mode #main-game {
+                justify-content: center;
+            }
+        }
+
+        /* NEW: Styles for user-drawn highlights. Applied directly to the square div. */
+        .highlight-user-green { background-color: rgba(21, 128, 61, 0.5) !important; }
+        .highlight-user-red { background-color: rgba(185, 28, 28, 0.5) !important; }
+        .highlight-user-yellow { background-color: rgba(217, 119, 6, 0.5) !important; }
+        .highlight-user-blue { background-color: rgba(37, 99, 235, 0.5) !important; }
+
         /* Styles for click-to-move highlighting */
         .highlight-selected {
             background-color: rgba(45, 156, 219, 0.5) !important;
@@ -172,6 +187,7 @@
                     <p id="opening-name" class="text-sm text-dark h-6 text-right truncate"></p>
                 </div>
                  <div class="flex justify-end items-center gap-2 mt-2">
+                    <button id="focus-mode-toggle" class="top-action-icon-btn btn-secondary" title="Focus Mode">👁️</button>
                     <button id="hint-button" class="top-action-icon-btn btn-secondary" title="Show Hint">💡</button>
                     <button id="undo-button" class="top-action-icon-btn btn-secondary" title="Undo"><img src="icon/arrow-uturn-left.png" alt="Undo"></button>
                     <button id="sound-toggle" class="top-action-icon-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button>
@@ -217,11 +233,11 @@
                             <p id="summary-final-material" class="text-sm text-dark">Final Material: ---</p>
                          </div>
                          <div id="summary-accuracy" class="flex justify-around text-center">
-                             <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
-                             <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
+                              <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
+                              <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
                          </div>
                          <div id="summary-move-counts" class="grid grid-cols-3 gap-2 text-center">
-                              <span class="col-span-3 text-sm text-dark italic">Run full review for move breakdown.</span>
+                               <span class="col-span-3 text-sm text-dark italic">Run full review for move breakdown.</span>
                          </div>
                     </div>
                     <div class="flex-grow flex items-center justify-center">
