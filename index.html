@@ -12,13 +12,13 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
     <link rel="stylesheet" href="style.css">
 </head>
-<body class="p-4">
+<body class="">
 
-    <div id="main-game" class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-4 lg:h-screen">
-        <div id="board-area-container" class="w-full flex justify-center items-center">
-            <main class="w-full max-w-[720px] flex flex-col gap-2">
+    <div id="main-game" class="w-full max-w-screen-xl mx-auto flex flex-col lg:flex-row items-stretch justify-center gap-4 lg:h-screen p-4">
+        <div id="board-area-container" class="flex justify-center items-center">
+            <main id="board-main-content" class="w-full max-w-[720px] flex flex-col gap-2 js-match-height">
                 <header class="header-footer flex justify-between items-center mb-1 p-2 rounded-md gap-4">
-                    <span id="top-player-name" class="font-bold text-lg">AI (Black)</span>
+                    <span id="top-player-name" class="font-bold text-lg w-48 truncate">AI (Black)</span>
                     <div id="captured-by-black" class="captured-pieces-container flex flex-wrap items-center min-h-[32px] rounded-md p-1 flex-grow justify-start"></div>
                     <span id="black-advantage" class="font-bold text-green-400 flex-shrink-0"></span>
                 </header>
@@ -29,81 +29,74 @@
                     <div id="right-ranks" class="coordinates ranks"></div><div id="bottom-files" class="coordinates files"></div>
                 </div>
                 <footer class="header-footer flex justify-between items-center mt-1 p-2 rounded-md gap-4">
-                    <span id="bottom-player-name" class="font-bold text-lg">Player (White)</span>
+                    <span id="bottom-player-name" class="font-bold text-lg w-48 truncate">Player (White)</span>
                     <div id="captured-by-white" class="captured-pieces-container flex flex-wrap items-center min-h-[32px] rounded-md p-1 flex-grow justify-start"></div>
                     <span id="white-advantage" class="font-bold text-green-400 flex-shrink-0"></span>
                 </footer>
             </main>
         </div>
 
-        <aside class="w-full lg:w-80 p-4 rounded-lg flex flex-col">
+        <aside class="w-full lg:w-80 p-4 rounded-lg flex flex-col js-match-height">
             <section class="text-center pb-4 border-b themed-border flex-shrink-0">
                 <div class="flex justify-between items-center">
                     <h1 id="game-status" class="text-2xl font-bold h-8 text-left">White's Turn</h1>
                     <p id="opening-name" class="text-sm text-dark h-6 text-right truncate"></p>
                 </div>
-                 <div class="flex justify-end items-center gap-2 mt-2">
-                    <button id="focus-mode-toggle" class="top-action-icon-btn btn-secondary" title="Focus Mode">👁️</button>
-                    <button id="hint-button" class="top-action-icon-btn btn-secondary" title="Show Hint">💡</button>
+                 <div class="flex justify-end items-center gap-2 mt-2 flex-wrap">
+                  <div class="flex justify-end items-center gap-0 mt-0 flex-wrap">
+    <button id="focus-mode-toggle" class="top-action-icon-btn btn-secondary" title="Focus Mode">
+        <img src="icon/eye.png" alt="Focus Mode"/>
+    </button>
+</div>
+                     <div class="flex justify-end items-center gap-0 mt-0 flex-wrap">
+    <button id="hint-button" class="top-action-icon-btn btn-secondary" title="Show Hint">
+        <img src="icon/light-bulb.png" alt="Show Hint"/>
+    </button>
+</div>
                     <button id="undo-button" class="top-action-icon-btn btn-secondary" title="Undo"><img src="icon/arrow-uturn-left.png" alt="Undo"></button>
                     <button id="sound-toggle" class="top-action-icon-btn" title="Toggle Sound"><img id="sound-icon" src="icon/speaker-wave.png" alt="Sound On"></button>
                     <button id="restart-button" class="top-action-btn btn-primary flex-shrink-0">New Game</button>
                  </div>
             </section>
+            
             <nav class="flex border-b themed-border flex-shrink-0">
-                <button data-tab="moves" class="tab-button flex-1 p-2 text-base font-bold active">Moves</button>
-                <button data-tab="analysis" class="tab-button flex-1 p-2 text-base font-bold">Analysis</button>
+                <button data-tab="moves" class="tab-button flex-1 p-2 text-base font-bold active">Game</button>
                 <button data-tab="settings" class="tab-button flex-1 p-2 text-base font-bold">Settings</button>
             </nav>
+
             <div class="flex-grow pt-4 flex flex-col min-h-0">
                 <div id="moves-tab" class="tab-content active h-full flex-col gap-4">
-                    <div class="flex justify-center items-center gap-4 flex-shrink-0">
-                        <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
-                        <button id="history-prev" class="history-nav-btn" title="Previous Move"><img src="icon/chevron-left.png" alt="Previous"></button>
-                        <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
-                        <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
+                    <div id="game-summary-section" class="p-3 bg-inset rounded-md space-y-4 hidden flex-shrink-0">
+                         <h3 class="text-xl font-bold text-center">Game Over</h3>
+                         <div id="summary-accuracy" class="flex justify-around text-center">
+                              <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
+                              <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
+                         </div>
+                         <button id="run-review-btn" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-primary">Run Full Game Review</button>
                     </div>
-                    <div id="opening-explorer" class="p-2 bg-inset rounded-md hidden flex-shrink-0">
-                        <h4 class="font-bold text-sm text-center border-b themed-border pb-1 mb-1">Opening Explorer</h4>
-                        <div id="opening-explorer-content" class="text-sm text-dark"></div>
-                    </div>
-                    <div class="move-history-container rounded-md flex-grow flex flex-col min-h-0">
-                        <div class="grid grid-cols-3 gap-x-2 p-2 border-b themed-border text-center font-bold text-dark flex-shrink-0">
-                            <span>#</span>
-                            <span>White</span>
-                            <span>Black</span>
+
+                    <div id="live-game-view" class="h-full flex flex-col gap-4">
+                        <div class="flex justify-center items-center gap-4 flex-shrink-0">
+                            <button id="history-first" class="history-nav-btn" title="First Move"><img src="icon/backward.png" alt="First"></button>
+                            <button id="history-prev" class="history-nav-btn" title="Previous Move"><img src="icon/chevron-left.png" alt="Previous"></button>
+                            <button id="history-next" class="history-nav-btn" title="Next Move"><img src="icon/chevron-right.png" alt="Next"></button>
+                            <button id="history-last" class="history-nav-btn" title="Current Position"><img src="icon/forward.png" alt="Last"></button>
                         </div>
-                        <div id="move-history-log" class="flex-grow overflow-y-auto p-2"></div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 flex-shrink-0">
-                          <button id="swap-sides-button" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Swap Sides</button>
-                          <button id="export-pgn-btn" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Export PGN</button>
+                        <div id="opening-explorer" class="p-2 bg-inset rounded-md hidden flex-shrink-0">
+                            <h4 class="font-bold text-sm text-center border-b themed-border pb-1 mb-1">Opening Explorer</h4>
+                            <div id="opening-explorer-content" class="text-sm text-dark"></div>
+                        </div>
+                        <div class="move-history-container rounded-md flex-grow flex flex-col min-h-0">
+                            <div class="grid grid-cols-3 gap-x-2 p-2 border-b themed-border text-center font-bold text-dark flex-shrink-0">
+                                <span>#</span>
+                                <span>White</span>
+                                <span>Black</span>
+                            </div>
+                            <div id="move-history-log" class="flex-grow overflow-y-auto p-2"></div>
+                        </div>
                     </div>
                 </div>
                 
-                <div id="analysis-tab" class="tab-content h-full flex-col gap-4">
-                    <div id="game-summary-section" class="p-3 bg-inset rounded-md space-y-4 hidden">
-                         <h3 class="text-xl font-bold text-center">Game Summary</h3>
-                         <div class="text-center">
-                            <p id="summary-opening-name" class="text-sm text-dark">Opening: ---</p>
-                            <p id="summary-final-material" class="text-sm text-dark">Final Material: ---</p>
-                         </div>
-                         <div id="summary-accuracy" class="flex justify-around text-center">
-                             <div><div class="font-bold text-lg">--%</div><div class="text-dark">White Accuracy</div></div>
-                             <div><div class="font-bold text-lg">--%</div><div class="text-dark">Black Accuracy</div></div>
-                         </div>
-                         <div id="summary-move-counts" class="grid grid-cols-3 gap-2 text-center">
-                                 <span class="col-span-3 text-sm text-dark italic">Run full review for move breakdown.</span>
-                         </div>
-                    </div>
-                    <div class="flex-grow flex items-center justify-center">
-                        <button id="run-review-btn" class="w-full px-4 py-3 font-bold rounded-lg shadow-md btn-primary">Run Full Game Review</button>
-                    </div>
-                    <div id="review-progress-bar" class="w-full bg-gray-700 rounded-full h-2.5 hidden">
-                        <div class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
-                    </div>
-                </div>
-
                 <div id="settings-tab" class="tab-content h-full flex-col gap-6">
                     <div class="flex justify-between items-center"><span class="font-bold text-lg">Player Name:</span><span id="player-name" class="text-lg text-dark cursor-pointer hover:text-light" title="Click to edit name">Player</span></div>
                     <div>
@@ -130,6 +123,10 @@
                         <label for="log-box-toggle" class="font-bold text-lg">Show Debug Log</label>
                         <input type="checkbox" id="log-box-toggle" class="h-5 w-5 rounded-sm themed-border text-blue-600 focus:ring-blue-500">
                     </div>
+                    <div class="grid grid-cols-2 gap-2 pt-2 border-t themed-border">
+                        <button id="swap-sides-button" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Swap Sides</button>
+                        <button id="export-pgn-btn" class="w-full px-4 py-2 font-bold rounded-lg shadow-md btn-secondary">Export PGN</button>
+                    </div>
                     <div class="pt-2 border-t themed-border">
                         <label for="fen-input" class="font-bold text-lg mb-2 block">Load Position from FEN</label>
                         <div class="flex gap-2">
@@ -142,7 +139,7 @@
         </aside>
     </div>
     
-    <div id="analysis-room" class="w-full max-w-screen-xl mx-auto flex-col lg:flex-row items-stretch justify-center gap-4 hidden lg:h-screen">
+    <div id="analysis-room" class="w-full max-w-screen-xl mx-auto flex-col lg:flex-row items-stretch justify-center gap-4 hidden lg:h-screen p-4">
         <div class="w-full flex justify-center items-center">
             <main class="w-full max-w-[720px] flex flex-col gap-2">
                 <header class="header-footer flex justify-center items-center mb-1 p-2 rounded-md">
@@ -236,6 +233,7 @@
     </div>
     
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.matchHeight/0.7.2/jquery.matchHeight-min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.12.0/chess.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
@@ -243,8 +241,13 @@
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <script src="config.js"></script>
-    <script src="script.js"></script>
-    <script src="analysis.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/board.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/main.js"></script>
+
+    <script src="analysis/analysis-core.js"></script>
+    <script src="analysis/analysis-ui.js"></script>
 </body>
 </html>
