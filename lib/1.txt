@@ -1,0 +1,317 @@
+Version 2 — “Bulletproof” Failsafe + Loader Plan (no new libraries)
+
+Nice — I’ll give you a practical, production-ready V2 plan that’s designed to be rock-solid under your constraints:
+
+runs from file:/// (no server),
+
+adds no external libraries (no source-map-consumer, no crc32, no new CDN),
+
+remains local-only (won’t trigger Sophos/Cyberhaven),
+
+provides the most useful logs possible (structured, persisted, exportable, redaction-ready),
+
+has lightweight, graceful animations using existing in-page CSS + requestAnimationFrame and GSAP if available (but works with pure CSS fallback),
+
+fits your existing architecture (inline failsafe in index.html, loader.js asset list).
+
+I’ll deliver: goals, design, detailed behavior on success/failure, file list (add/modify), data schemas, heuristics, UI behavior, safe recovery actions, test checklist, and implementation notes you can hand to dev or paste into files.
+
+Goals (what V2 must achieve)
+
+Capture every boot-related event (loads, parse errors, uncaught exceptions, promise rejections, asset checks) from the earliest moment possible.
+
+Present one-click root-cause diagnosis (ranked), with the single-line “what to do next”.
+
+Persist logs locally (IndexedDB + short LocalStorage fallback) with retention and redaction support — no automatic network activity.
+
+Provide safe self-heal options (clear caches, clear IndexedDB, reload) — always user-initiated and auditable.
+
+Work on file:/// browsers and in environments where adding new libs or external downloads may be blocked.
+
+Minimal CPU/memory cost during normal runs; heavy work is loaded on demand.
+
+High-level design (short)
+
+Inline ultra-early failsafe (in index.html head) expanded:
+
+Attach global hooks, wrap console, capture DOM insertion time, and hold a small synchronous manifest (embedded JS object DIAG_MANIFEST).
+
+Provide a tiny, self-contained FNV-1a or DJB2 hash function (pure JS) for quick textual validation (no external crc library).
+
+Buffer early logs to window.EARLY_LOGS and persist a snapshot to localStorage as fallback.
+
+Loader.js (improved):
+
+Sequenced loading with per-asset timestamps and graceful per-asset timeout (configurable).
+
+Aggregate progress UI (progress bar + percent + last loaded file).
+
+If any asset onerror triggers → log, call forceShowConsole() immediately.
+
+Diagnostics module (diagnostics-loader.js):
+
+Migrates EARLY_LOGS → IndexedDB, continues logging, exposes Diag API (pushStep, getEvents, clearEvents, export).
+
+Implements root-cause heuristics (resource failures → checksum mismatch → runtime exception → watchdog timeout → worker errors).
+
+Decoding: since source-map unavailable, include a user-action guidance step: show raw stack trace and the mapped filename:lineno if present; instruct manual local mapping (still useful). Optionally accept embedded maps-index.js if you later can add it.
+
+UI: Debug Console (debug-console.js + CSS):
+
+Summary-first top: Root cause sentence, suggested next action(s).
+
+Timeline of events with timestamps, asset load times, errors, warnings.
+
+Export & Redaction wizard (manual).
+
+Safe actions: Clear SW caches, Clear IndexedDB, Clear localStorage, Hard reload — all with confirmations and optional log snapshot before action.
+
+Fail/Recovery behaviors:
+
+Instant presentation on fatal errors; soft warnings for missing CSS/partial functionality logged but app may continue.
+
+Watchdog adaptive timeout: base + per-asset to avoid false positives on slower PCs.
+
+Files to add / modify (exact list)
+
+Modify
+
+index.html (inline failsafe): update inline script block — replace existing with extended V2 (detailed below). Embed DIAG_MANIFEST object here (synchronously).
+
+src/js/core/loader.js: update to V2 loader behavior (per-asset timestamps, dynamic timeout, progress UI hooks, call Diag.pushStep()).
+
+Add
+
+src/js/core/diagnostics-loader.js — creates global Diag, migrates early logs, IndexedDB wrapper usage, heuristics.
+
+src/js/core/diagnostics-db.js — tiny IndexedDB wrapper (events store diag_events, TTL, capped).
+
+src/js/ui/debug-console.js & src/css/debug-console.css — the overlay UI with summary, timeline, export/redact, safe controls.
+
+src/js/core/diag-selfheal.js — user-initiated recovery helpers (clearCache, clearIndexedDB, unregisterSW).
+
+(optional) src/js/vendor/maps-index.js — only if you can later add maps; not required.
+
+Note: No external libraries added. All new code is vanilla ES6.
+
+Important implementation rules (must follow)
+
+No automatic outbound network calls: export only by user action.
+
+All added code must be defensive: null-check DOM elements, feature-detect indexedDB, caches, navigator.serviceWorker.
+
+Do not attempt to re-enable DevTools or modify system policies.
+
+All heavy tasks must be lazy-loaded after console opens (e.g., advanced analysis UI code may be loaded when user opens console).
+
+File:// awareness: detect location.protocol === 'file:' and skip fetch-based checksum attempts; instead rely on loaded <script> elements’ .textContent or fallback to marking as “checksum unavailable”.
+
+DIAG_MANIFEST (how to store without .json)
+
+Embed a JS object in index.html head:
+
+<script id="diag-manifest">
+window.DIAG_MANIFEST = {
+  version: '2025.09.21.1',
+  critical: [
+    { path: './src/js/core/loader.js', hash: 'd1f2a3...' },
+    { path: './src/js/core/app-core.js', hash: 'e34b...' },
+    // ...
+  ],
+  soft: [
+    './src/css/theme.css',
+    './src/js/lib/fuse.min.js'
+  ]
+};
+</script>
+
+
+hash values can be a simple FNV-1a hex from your file generator (offline tool you run before packaging).
+
+On file://: the loader will not attempt fetch() the file to compute hash (browsers block it), but will keep the manifest available for human reference and for checksum attempts on http(s) when possible.
+
+Lightweight checksum (no library)
+
+Use a tiny FNV-1a hash implementation inline in the failsafe (few lines):
+
+function fnv1a(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return ('0000000' + h.toString(16)).slice(-8);
+}
+
+
+Use this only when you can read the script text (inline script tags or if fetch() available).
+
+If unavailable, mark checksum attempt as “skipped (file:// environment)”.
+
+IndexedDB schema (diagnostics-db.js)
+
+DB name: billerhub_diagnostics_v2
+
+Store: events (keyPath auto-increment)
+
+{ id, ts (ISO), level: 'error'|'warn'|'info'|'log', type: 'asset'|'runtime'|'watchdog'|'console', message, meta: { url, lineno, colno, stack, assetLoadTime }, tags: [] }
+
+Store: snapshots for exported snapshots
+
+Retention policy: keep last 500 events OR 7 days — whichever smaller. Rotate automatically.
+
+Log structure examples (what to capture)
+
+Asset load success
+
+{ "ts":"2025-10-09T12:02:03.123Z", "level":"info", "type":"asset", "message":"Loaded", "meta":{ "url":"./src/js/core/utils.js", "durationMs": 28 } }
+
+
+Asset failure
+
+{ "ts": "...", "level":"error", "type":"asset", "message":"Failed to load", "meta":{ "url":"./live/BGE.js", "httpStatus":404, "error":"NetworkError" } }
+
+
+Runtime Exception
+
+{ "ts":"...", "level":"error", "type":"runtime", "message":"Uncaught TypeError: x is undefined", "meta":{ "stack":"...", "filename":"app-main.js", "lineno":123 } }
+
+
+Watchdog
+
+{ "ts":"...", "level":"warn", "type":"watchdog", "message":"Boot timeout", "meta":{ "timeoutMs": 10000, "lastStep":"loader:loaded-20/60" } }
+
+Root-cause heuristics (how root is chosen)
+
+Critical asset failure (script/CSS failed to load) → highest priority. If asset is in DIAG_MANIFEST.critical, mark fatal.
+
+Checksum mismatch (when available) → next priority — suggests cache corruption.
+
+Uncaught exception originating from a module that failed earlier → correlated and promoted.
+
+Worker/Promise rejection that occurs during boot → mid priority.
+
+Watchdog expiration without visible errors → lower priority; show last pushStep() events.
+
+Multiple low-priority warnings → show grouped; suggest “partial functionality”.
+
+Each event is scored; the highest score becomes the root cause shown in the UI top summary.
+
+Debug Console UI behavior (what user sees)
+When fatal (startup fails)
+
+Splash remains visible faintly; debug overlay fades in (CSS transition).
+
+Top summary (single sentence): Root cause: Failed to load ./src/js/core/app-core.js (404). Suggested action: Clear caches & reload.
+
+Buttons: [Copy Summary] [Export Report (.zip)] [Clear Caches & Reload] [Open Timeline]
+
+Timeline view: chronological list with timestamps and icons (error/warn/info). Clicking an event expands meta and shows raw stack.
+
+Export flow: create JSON snapshot (events + meta + manifest + asset timestamps), show preview, allow redaction toggles (remove stack traces, remove PII), then create downloadable .zip or .json.
+
+When partial or non-fatal
+
+Small badge in header: ⚠ Partial load — see diagnostics (click opens overlay).
+
+Non-blocking toast: Note: notes-search module failed to load; search will be disabled. Open diagnostics.
+
+Accessibility & UX
+
+Keyboard: Ctrl+Alt+C or Ctrl+Shift+D opens console.
+
+aria-live region for root summary changes.
+
+Mobile-friendly (stacking layout).
+
+Safe self-heal actions (user-initiated only)
+
+Clear caches & reload: caches.keys() → caches.delete(name) then location.reload(true) (user must confirm).
+
+Clear IndexedDB (diagnostics only or app DB): confirm, then delete DB via indexedDB.deleteDatabase(name).
+
+Unregister Service Worker (if any): navigator.serviceWorker.getRegistrations().then(r=>r.forEach(r=>r.unregister())).
+
+Hard reload (bypass cache): location.reload(true)— note true ignored in many browsers; present instruction to do manual Ctrl+F5 if needed.
+
+Each action must snapshot current logs before running and show success/fail result.
+
+Animations (super lightweight)
+
+Use CSS transitions for the splash and overlay (transform, opacity). This is CPU-friendly.
+
+If window.gsap exists, use it for polished entrance/exit: animate only the overlay container; do not require it.
+
+Use requestAnimationFrame for smooth scrollIntoView animations in the search/highlight components.
+
+Examples:
+
+Overlay entrance: .debug-overlay { transform: translateY(6%); opacity:0 } .debug-overlay.visible { transform: translateY(0); opacity:1; transition: transform .36s cubic-bezier(.2,.8,.2,1), opacity .25s }
+
+Progress bar: animate width via CSS + set width from JS (progressEl.style.width = percent + '%') — no heavy repaint.
+
+Testing checklist (how to validate V2)
+
+Normal success: all assets load; window.init() runs; window.appInitialized = true; failsafe never shows.
+
+Single asset missing: rename one file → loader logs failure and debug console pops with that asset as root cause; Clear Caches & Reload recommended.
+
+Syntax error: introduce a syntax error in a module → window.onerror catches stack, console shows stack & message.
+
+Watchdog test: delay window.init() beyond adaptive timeout → watchdog triggers; timeline shows last steps.
+
+IndexedDB offline: index events persisted; reopen app → persisted events available in debug console.
+
+Export & Redact: export snapshot; verify redaction removes sensitive fields.
+
+Service Worker: if SW exists, test unregister flow and ensure reload behavior.
+
+file:// operation: run index.html from file system — ensure manifest accessible, checksum attempts skipped gracefully, fallback messaging present.
+
+Security validation: confirm no external requests are made by console (network monitor) and that exports are manual.
+
+Rollout plan (phased)
+
+Phase 1 (MVP fast deploy) — Update index.html inline failsafe + loader.js enhancements; add diagnostics-db.js and diagnostics-loader.js that only capture and persist logs + add simple overlay skeleton. (Deliverable in <1 day to implement.)
+
+Phase 2 (UI & heuristics) — Add full debug-console.js UI + heuristics ranking + export/redaction. Add self-heal actions. (3–5 days)
+
+Phase 3 (polish & tests) — Add adaptive timeout formula, progress UI polish, local snapshots, and thorough testing across environments. (2–3 days)
+
+Phase 4 (optional) — Add maps-index.js and local source-map parsing if/when allowed.
+
+Practical implementation notes & gotchas
+
+Timeouts: keep adaptive and generous on first rollout to avoid false positives in slow environments.
+
+Persistence size: cap IndexedDB events to last 500 records. Avoid storing full large stacks if not required. Optionally compress strings (not necessary).
+
+file://: do not depend on fetch() for manifest or map files. Use embedded DIAG_MANIFEST and maps-index.js if source maps needed later.
+
+Enterprise blocking: your code will not perform any network sends; export is user-initiated download (safe). That avoids Sophos/Cyberhaven DLP flags.
+
+No new libs: all hashing, parsing, and UI must be inlined or added as plain JS files you control.
+
+Quick sample user flows (what user sees)
+
+Happy path: Splash → progress bar briefly → app opens → no console.
+
+Fatal script error: Splash stays, debug console overlay auto-opens with root cause and Copy/Export buttons.
+
+Partial failure (non-critical): App opens, small warning in header + “Diagnostics” badge; user can open console manually.
+
+User-initiated recovery: User clicks “Clear Caches & Reload” → confirms → snapshot exported locally → caches cleared → reload runs; if still failing, console shows new root cause.
+
+Final notes
+
+This plan is safe by design (local-only, manual exports), resilient (many capture points + adaptive watchdog), and practical (no new external libs). It will give you the most powerful in-app logs and recovery system possible under enterprise constraints.
+
+If you want, next I can:
+
+Produce the exact code for the inline V2 failsafe script to paste into index.html (single block),
+
+Produce the loader.js patch (asset load improvements + progress UI),
+
+Produce diagnostics-loader.js and diagnostics-db.js code skeletons.
+
+Say “GENERATE V2 CODE” and I’ll output the first file (inline failsafe) ready to drop into index.html
