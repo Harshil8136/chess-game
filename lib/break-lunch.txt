@@ -1,390 +1,797 @@
-Below is a complete, professional-grade plan to add a Calabrio-style break/lunch enforcement feature to your Clock module, designed to integrate cleanly with your existing architecture and constraints:
-
-no new external libraries (works under file:///)
-
-respects enterprise security (no telemetry, no policy tampering)
-
-uses existing modules (Anim, DB, loader.js, IndexedDB)
-
-fully configurable via pre-generated month files (e.g. calabrio-oct-2025.js)
-
-accessible, animation-polished, low CPU/RAM
-
-I’ll give: goals, UI/UX behavior, data format for month files, exact files to add/modify, initialization & runtime flow, locking strategy (safe and reversible), animations & visual design notes, edge cases & robustness, audits & logging, accessibility, test checklist, and rollout/phase plan. This is a plan only — no code until you say “APPROVE — GENERATE”.
-
-1) Goals & constraints (short)
-
-Notify users of scheduled breaks/lunches (visual + audio optional) and automatically lock the application UI for the scheduled interval.
-
-Allow safe recovery/override flows that are explicit & auditable.
-
-Keep everything local and explicit (no automatic network, no hidden changes to OS or browser policies).
-
-Use small, smooth animations similar to iOS/SamsungOne styles but implemented with CSS and optional GSAP when present.
-
-Data-driven: schedule files are pre-generated JS files (e.g. calabrio-2025-10.js) that the loader imports.
-
-2) User experience — what the user sees & feels
-Normal (non-break) Clock view
-
-Clock UI remains as today with weather widget.
-
-A subtle band below the clock shows the next scheduled event: icon + “Lunch starts in 47m” + small progress bar.
-
-10 minutes before start: subtle in-app nudge (small toast) + soft top-bar pulse.
-
-1 minute before: stronger prompt (modal hint, slide-up) — “Lunch in 60s”.
-
-On scheduled time: full-screen Lock Overlay (see below) appears with tactile iOS-like animation and blur + darken top bar.
-
-Lock Overlay (enforced state)
-
-Full-screen overlay with blurred background using backdrop-filter (fall back to semi-opaque dark if unsupported).
-
-Top status bar remains visible but dimmed (“On break — ends in 18:12”) — use a compact top strip that mimics iOS status feel (soft rounded corners, subtle shadow).
-
-Center of overlay:
-
-Large countdown timer (MM:SS) with circular progress ring (CSS + SVG).
-
-Text: “Lunch Break — Enjoy your time. App is locked.”
-
-Two buttons: “I’m Back (Return Early)” and “Request Override” — both gated.
-
-“I’m Back” behavior:
-
-If company policy allows early return, allow the user to end break early after a short confirmation and optional reason. Track action in diagnostics log for audit.
-
-Alternatively, restrict “I’m Back” to no effect unless manager override present—configurable.
-
-“Request Override” behavior:
-
-Exposes a manual flow to request manager override (creates a local audit entry and shows a persistent toast; no automatic network).
-
-Optionally accept an override code (if you want a simple PIN stored in a manager file or provided by supervisor). Make clear this is admin-only and optional.
-
-Overlay is keyboard accessible. All in-app interactions beneath overlay are disabled (by intercepting top-level events and stopping propagation) — this is a UI lock only, no OS-level blocking.
-
-Unlock state (after break ends)
-
-Smooth reverse animation: overlay slides down, top bar regains normal color gradually (subtle, 300–450ms).
-
-Small “Welcome back” toast and short animation on Clock area (pulse or soft scale).
-
-3) Data model — pre-generated monthly files
-
-You said you want pre-generated month files (“Gemini will create whole code for a specific separate month”): that works perfectly. Each file is a plain JS file that defines a global schedule object — no JSON, no fetch required.
-
-File naming convention
-/src/data/calabrio-YYYY-MM.js or /src/data/calabrio-oct-2025.js
-
-Data structure (example schema)
-
-/* calabrio-2025-10.js */
-window.CALABRIO_SCHEDULE = window.CALABRIO_SCHEDULE || {};
-window.CALABRIO_SCHEDULE['2025-10'] = {
-  timezone: 'America/Toronto', // optional default; schedule times are in this tz
-  rules: { allowEarlyReturn: false, requireManagerOverride: true, overridePinHash: null }, // optional policy
-  events: [
-    // event-per-day (or multiple events per day)
-    { date: '2025-10-01', intervals: [
-        { start: '11:30', end: '12:00', type: 'lunch', label: 'Lunch', id: '2025-10-01-lunch' },
-        { start: '15:00', end: '15:15', type: 'break', label: 'Afternoon Break', id: '2025-10-01-break1' }
-      ]
-    },
-    { date: '2025-10-02', intervals: [ { start: '12:00', end: '12:30', type: 'lunch', label: 'Lunch', id: '2025-10-02-lunch' } ] },
-    // ...
-  ]
-};
-
-
-Notes:
-
-Dates + times stored in localized strings. The runtime will combine date + time and interpret in specified timezone using the browser Intl API. If timezone absent, assume local system timezone (but warn if mismatch).
-
-rules allow you to configure behavior per-month: whether early returns are permitted, whether overrides require a manager PIN, etc.
-
-Maker (Gemini) will generate these files so you don't need manual entry.
-
-4) Files to add / modify
-
-Add
-
-src/js/features/calabrio-core.js — main feature controller (initialization, events scheduling, timers, lock/unlock).
-
-src/js/ui/calabrio-ui.js — UI rendering/injection for overlay, preview band in Clock, notifications.
-
-src/css/calabrio.css — styles for overlay, circular timer, top bar dimming, animations.
-
-src/data/calabrio-YYYY-MM.js — monthly schedule files (generated).
-
-src/js/core/calabrio-storage.js — small helper to persist user preferences, last override actions, and audit logs to IndexedDB via your existing DB wrapper.
-
-Modify
-
-src/js/features/clock.js (or whichever holds clock) — register a Calabrio feature button / band and call FeatureLoader.load('calabrio') when Clock is opened.
-
-src/js/core/loader.js — add monthly schedule files to asset list OR use dynamic feature loading (FeatureLoader) to fetch them on demand. Because you prefer single HTML and no fetch on file://, include monthly files in JS_ASSETS if you want them always available; otherwise dynamically load via loadScript that loader already supports.
-
-5) Initialization & runtime flow (detailed)
-
-Feature load
-
-When user opens the Clock panel (or on app startup if you prefer), call FeatureLoader.load('calabrio') which loads calabrio-core.js and calabrio-ui.js.
-
-calabrio-core reads window.CALABRIO_SCHEDULE for current month key (e.g., 2025-10). If not present, show “No schedule installed” UI.
-
-Schedule parsing
-
-Convert every event entry into canonical Date objects with time zone awareness:
-
-Use new Date(Date.UTC(year, monthIndex, day, hour, min)) + offset if timezone != local, or use Intl.DateTimeFormat to get offset.
-
-Store canonical start/end timestamps.
-
-Compute next event
-
-From now, compute the next event and the "state" (upcoming, active, past).
-
-Expose calabrio.getNextEvent() and calabrio.isActive().
-
-Timers & pre-notifications
-
-Create one short-lived timer for pre-notifications (10 min, 1 min) and one precise timer for start/end using setTimeout with computed deltas (clamped to safe maximum).
-
-Use requestAnimationFrame for small visual updates (e.g., countdown smoothness), but the actual timing is controlled via setTimeout to avoid CPU waste.
-
-On start
-
-When an event starts, call calabrio.lockUi(event):
-
-Save current app interaction state to IndexedDB (audit): Diag.pushStep('calabrio:locked', { id, ts }).
-
-Add a top-level DOM overlay element (injected into #app-container) with role="dialog" aria-modal="true".
-
-Add a global event-capture layer that stopImmediatePropagation() for clicks/keyboard events except whitelist keys (Escape for emergency? configurable).
-
-Add a body class calabrio-locked to fade/dim top bar and apply styling.
-
-During break
-
-Keep countdown ticking. Provide clear UI controls for allowed actions (I’m Back / Request Override).
-
-Persist state (active event id, startTime) to IndexedDB so reload during break preserves lock.
-
-On end
-
-Remove overlay, remove calabrio-locked CSS class, push audit calabrio:unlocked.
-
-Short “Welcome back” animation via Anim module.
-
-Override / early return
-
-If policy allows:
-
-I’m Back triggers immediate unlock and logs reason. Notify user and keep audit.
-
-If manager override required:
-
-Show a modal with a PIN input. If PIN match (local hashed), unlock and audit. Or provide a manager approval code flow (manual).
-
-Edge: time drift & sleep
-
-On visibilitychange, resume from sleep, or focus events, re-evaluate current time against schedule and enforce lock/unlock as needed.
-
-If system clock changed (detect performance.now() vs Date.now() skew > threshold), warn user and show instructions to sync time.
-
-6) Lock implementation (safe & non-invasive)
-
-This is an in-app UI lock only:
-
-It prevents user interaction with your application by intercepting and blocking events at document level.
-
-It does NOT attempt to modify browser, OS, or security settings (explicitly forbidden).
-
-It is reversible, auditable, and user-controlled by configured rules.
-
-How to implement safely
-
-Add a full-screen <div id="calabrio-lock-overlay" tabindex="-1"> appended to <body> or #app-container.
-
-Add a pointer-events: auto to overlay, and pointer-events: none to the underlying app wrapping container.
-
-Add keyboard global handler that, while overlay active, prevents key actions except allowed ones (Ctrl+Alt+C to open debug console only if allowed, or a configurable emergency key).
-
-Persist overlay state in IndexedDB, so a reload during a locked period re-creates overlay immediately.
-
-Audit logs
-
-Use Diag.pushStep() or DB.set() to store calabrio:locked/unlocked/override events with timestamps and user action reasons.
-
-7) Animations & visual polish (iOS-like)
-Visual design principles
-
-Soft blur + semi-transparent overlay (backdrop-filter: blur(8px)), rounded UI elements, large legible numeric timer with subtle shadow.
-
-Use a circular progress ring (SVG) that animates smoothly via CSS stroke-dashoffset — very lightweight.
-
-Animate overlay enter/exit with combined transform + opacity (GPU-friendly).
-
-Use Anim module (GSAP) if present for a more cinematic entrance; otherwise use CSS transitions.
-
-Subtle haptics simulation: a tiny bounce using transform on unlock (0.08s scale -> back).
-
-Micro-detail ideas
-
-Top bar gloom: apply gradient overlay on top bar using CSS variable and animate opacity from 0 → 0.6.
-
-Pulse countdown: last 5 seconds, add a scale pulse to the timer (scale 1 → 1.05 → 1).
-
-Subtle ambient shadow: the overlay background uses a radial gradient to highlight center.
-
-Performance
-
-All animations use transform and opacity only (except backdrop-filter which may be GPU-intensive on some devices — implement a setting to disable blur if on low-spec device).
-
-Use prefers-reduced-motion to reduce or bypass animations.
-
-8) Persistence, audit & privacy
-
-Store all actions locally (IndexedDB via calabrio-storage.js):
-
-events store: {id, type: 'locked'|'unlocked'|'override_request', ts, meta}.
-
-Export audit: provide a manual "Export Audit" action that creates a downloadable JSON file (user-initiated) with redaction controls.
-
-Retention: keep last 90 days or last 1000 events — configurable.
-
-Privacy: no network, no telemetry. Exports are manual and redaction-friendly.
-
-9) Edge cases & robustness
-
-Machine sleep or hibernation: re-evaluate schedule on visibilitychange or focus.
-
-User changes system clock: detect large deltas Math.abs(Date.now() - (startup + (performance.now() - perfStart))) and warning message; re-sync schedule calculation.
-
-Time zone mismatch: if schedule timezone != system timezone, show a clear badge and convert times to local view; warn user if mismatch.
-
-Missing monthly file: show a safe UI “Schedule not installed for [month].” Provide a “Load month file” instruction (drag & drop or pick local file).
-
-Multiple user profiles on machine: schedule is local to application, stored in IndexedDB. If shared machines require per-user schedules, let your generated file include user identifiers (opt-in).
-
-10) Accessibility & compliance
-
-Overlay uses role="dialog" and aria-modal="true". Focus trap implemented while overlay active.
-
-Countdown announced via aria-live="polite" updates every minute or at significant changes.
-
-Respect prefers-reduced-motion: disable blur and heavy transitions.
-
-Ensure color contrast for timer and text passes WCAG AA.
-
-Provide keyboard-only workflows for overrides and unlocking.
-
-11) Security & corporate constraints
-
-No networking, no telemetry. All data local.
-
-No attempt to change system or browser policies or re-enable DevTools. Provide clear text in UI: “This feature is local-only and honors company policies.”
-
-Overrides and PINs must be stored as hashed strings if used, and only in local IndexedDB. Optionally store overridePinHash in the monthly file (not recommended). Prefer manager to input PIN manually for each override to avoid storing secrets in files.
-
-12) Auditing, logging & integration with Gemini diagnostics
-
-Each lock/unlock/override event is logged via Diag.pushStep() so your Gemini diagnostic console can show them alongside app errors.
-
-When lock is active and app errors occur, the debug console should still be accessible via an admin keycombo (configurable) for troubleshooting — but default disabled to avoid accidental bypass.
-
-Include calabrio tags in exported diagnostics so IT can quickly filter events.
-
-13) Testing checklist (what to verify)
-
-Start-of-event triggers overlay exactly at scheduled time (test using artificially short intervals).
-
-Pre-notifications at 10m and 1m display correctly.
-
-Overlay prevents in-app interaction but allows debug console if admin key is used (configurable).
-
-Early return allowed/blocked per rules.
-
-Overrides require PIN if configured; wrong PIN is logged and blocked.
-
-Timers persist across reloads and system sleep.
-
-Works under file:/// with schedule file present.
-
-Respect prefers-reduced-motion.
-
-Export audit creates JSON with expected fields and allows redaction.
-
-14) UX design snippets & micro-interactions (for design handoff)
-
-Countdown circle: use an SVG circle with stroke-dasharray and CSS transition for smooth progress; update via requestAnimationFrame every second.
-
-Top band: a soft pill-shaped band with icon + relative time string; clicking opens the full Calabrio UI.
-
-Overlay animations:
-
-Enter: translateY(8%) → 0 and opacity 0 → 1 (ease-out 360ms)
-
-Exit: reverse with small scale pop
-
-Button micro-animations: use transform: translateY(-2px) scale(0.995) on press with transition 120ms.
-
-Accessibility: focus outline 3px solid accent-color and aria-describedby for overlay message.
-
-15) Operational & generation workflow for monthly files
-
-You plan for Gemini to generate monthly files. A recommended workflow:
-
-Export or provide your weekly/monthly schedule:
-
-Option A: Use raw Calabrio export CSV (timestamps) — a small conversion script (local Node script or a lightweight in-browser generator you run once) converts it to calabrio-YYYY-MM.js.
-
-Option B: Let Gemini produce schedule by analyzing your past logs kept in IndexedDB (requires you to export those logs or allow Gemini to process them locally).
-
-Generation output:
-
-The generator produces calabrio-2025-10.js (as earlier schema) and you drop it into /src/data/.
-
-Update loader.js asset list to include the new file or put it in the dynamic FeatureLoader path so it loads on Clock open.
-
-Validation step:
-
-A small UI in Clock: “Validate schedule for October — [Preview] [Activate]”
-
-Preview shows all events in a calendar list so you can confirm before activation.
-
-Activation:
-
-Once activated, calabrio-core uses the schedule for runtime.
-
-Note: For security and enterprise friendliness, these steps are manual and local-only — no background sync or external services are involved.
-
-16) Phased rollout & priorities (no time estimates, but small to large)
-
-Phase A — Minimal core
-
-Add calabrio-core.js, calabrio-ui.js, calabrio.css, and one sample calabrio-YYYY-MM.js.
-
-Hook into Clock feature; show next event band; show modal on scheduled start; log events.
-
-Phase B — Polished UX + persistence
-
-Smooth animations via Anim (GSAP if present), circular progress ring, top bar dimming, IndexedDB audits, and override flow.
-
-Phase C — Admin tooling & generation
-
-Add generator guidance, schedule validation UI, and exportable audit reports.
-
-Phase D — Extra polish
-
-Demo mode, presentation-ready animations, per-user personalization (pin favorites), and deep integration with Gemini diagnostics.
-
-17) Final implementation notes & cautions
-
-Keep the overlay “lock” purely in-application. Don’t attempt to block OS or reopen DevTools. Document this clearly in any presentation or README to avoid IT concerns.
-
-Keep all schedule files versioned and signed by owner if needed for audit (e.g., add generatedBy and signature fields for traceability).
-
-Make override flows explicit and visible in the audit log — this makes the system trustworthy to supervisors and auditors.
+# CF-ASTRO PROJECT — OPERATIONAL RULES & ARCHITECTURE BIBLE
+
+> **Last Updated:** 2026-03-27
+> **Research Sources:** Cloudflare Docs MCP, Perplexity MCP, Cloudflare Bindings MCP, Official Documentation
+
+---
+
+## 🏢 PROJECT MISSION — COMMERCIAL-GRADE, $0 INFRASTRUCTURE
+
+**cf-astro is a production-ready, commercial-grade pet hotel website built entirely on FREE tier services.** This is not a demo, prototype, or hobby project — it is a real business application designed to:
+
+- ✅ Handle real customer bookings with email confirmations
+- ✅ Process GDPR/ARCO privacy requests with legal compliance
+- ✅ Serve optimized images globally via CDN with zero egress cost
+- ✅ Provide admin data management with auth-gated access
+- ✅ Run 24/7 at **$0/month** total infrastructure cost
+- ✅ Scale to **hundreds of daily visitors** without hitting any free tier ceiling
+- ✅ Deliver Lighthouse 95+ performance on mobile
+- ✅ Meet professional SEO, accessibility, and security standards
+
+**Every architectural decision in this project optimizes for one goal: maximum professional quality at exactly ZERO ongoing cost.** We achieve this by strategically combining Cloudflare's generous free tier (Workers, D1, R2, KV, Pages, Turnstile) with Resend, Supabase, Upstash, PostHog, and Sentry free tiers.
+
+---
+
+## 🚨 RULE #0 — THE ABSOLUTE LAW (NEVER VIOLATE)
+
+**cf-astro is the Cloudflare-native version of nextjs-app. We can deeply review, understand how everything looks, works, and is designed in nextjs-app — however, WE NEVER, like NEVER, copy any single file or code from there.**
+
+This is the **STRICTEST** rule and MUST be followed at ALL times:
+
+- ✅ **ALLOWED:** Reference nextjs-app to understand features, flows, UX patterns, business logic concepts
+- ✅ **ALLOWED:** Use MCP tools (Cloudflare Docs, Perplexity, Cloudflare Bindings) and SKILLs (astro, cloudflare, brainstorming) to find the best Cloudflare-native approach
+- ✅ **ALLOWED:** Build equivalent functionality from scratch using Cloudflare-optimized patterns
+- ❌ **FORBIDDEN:** Copy-pasting any file, component, function, hook, schema, or code block from nextjs-app
+- ❌ **FORBIDDEN:** Duplicating CSS, translations, or configuration verbatim from nextjs-app
+- ❌ **FORBIDDEN:** Using nextjs-app files as templates with "find and replace" modifications
+
+**Every line of code in cf-astro must be written fresh, optimized for the Cloudflare + Astro + Preact stack.**
+
+---
+
+## 1. PROJECT IDENTITY
+
+| Property | Value |
+|----------|-------|
+| **Name** | cf-astro (Madagascar Pet Hotel — Cloudflare Edition) |
+| **Purpose** | Cloudflare-native pet hotel website equivalent to nextjs-app |
+| **Framework** | Astro 5.7+ with `@astrojs/cloudflare` adapter |
+| **UI Islands** | Preact (3KB, React-compatible) for interactive components |
+| **Hosting** | Cloudflare Pages (unlimited bandwidth, free) |
+| **Database** | Cloudflare D1 (SQLite) + Supabase PostgreSQL (via Hyperdrive) |
+| **Cache** | Cloudflare KV + Upstash Redis |
+| **Storage** | Cloudflare R2 (images/assets) + Supabase Storage (private/auth-gated) |
+| **Email** | Resend HTTP API (via `resend` SDK or `fetch()`) |
+| **Bot Protection** | Cloudflare Turnstile (free, unlimited challenges) |
+| **Analytics** | PostHog (reverse-proxied) + Cloudflare Web Analytics |
+| **Error Tracking** | Sentry (browser SDK) |
+| **Logging** | BetterStack (to be added last) |
+| **i18n** | Astro built-in (es/en with prefix routing) |
+| **CSS** | Tailwind CSS v3 via `@astrojs/tailwind` |
+
+---
+
+## 2. CLOUDFLARE FREE TIER — EXACT LIMITS & QUOTAS
+
+> All data verified against official Cloudflare documentation (March 2026). Free limits reset daily at 00:00 UTC unless stated as monthly.
+
+### 2.1 Workers (Compute)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Requests | **100,000/day** |
+| CPU time per request | **10 ms** |
+| Memory | 128 MB |
+| Subrequests per request | 50 |
+| Worker script size | 3 MB |
+| Number of Workers | 100 per account |
+| Cron Triggers | 5 per account |
+| Static Asset files per Worker | 20,000 (25 MiB each) |
+| Environment variables | 64 per Worker (5 KB each) |
+| Startup time | 1 second |
+| Build minutes (Workers Builds) | 3,000/month |
+| Concurrent builds | 1 |
+
+### 2.2 D1 Database (SQLite)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Rows read | **5 million/day** |
+| Rows written | **100,000/day** |
+| Storage (total across all DBs) | **5 GB** |
+| Max database size | 10 GB (per DB) |
+| Databases per account | 10 |
+| Time Travel (point-in-time restore) | 7 days |
+| Queries per Worker invocation | 50 |
+| Egress/bandwidth | **FREE (no charges)** |
+| Read replication cost | **FREE (no extra charges)** |
+
+### 2.3 R2 Object Storage
+
+| Metric | Free Limit |
+|--------|-----------|
+| Storage | **10 GB-month/month** |
+| Class A operations (writes) | **1 million/month** |
+| Class B operations (reads) | **10 million/month** |
+| Egress (data transfer) | **FREE (always $0)** |
+| Delete operations | **FREE** |
+
+### 2.4 KV Namespace (Key-Value)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Keys read | **100,000/day** |
+| Keys written | **1,000/day** |
+| Keys deleted | **1,000/day** |
+| List requests | **1,000/day** |
+| Storage per account | **1 GB** |
+| Namespaces per account | 1,000 |
+| Keys per namespace | Unlimited |
+| Key size | 512 bytes |
+| Value size | 25 MiB |
+| Key metadata | 1,024 bytes |
+
+### 2.5 Hyperdrive (Connection Pooling)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Availability | **Included in Workers Free plan** (since April 2025) |
+| Connection pooling | Global connection pools to PostgreSQL/MySQL |
+| Cost | **FREE** |
+| Minimum connections | 5 per configuration |
+
+### 2.6 Pages (Static Hosting)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Builds per month | **500** |
+| Files per site | **20,000** |
+| File size | 25 MiB each |
+| Custom domains | 500 per account |
+| Bandwidth | **Unlimited** |
+| Sites/Projects | Unlimited |
+
+### 2.7 Durable Objects
+
+| Metric | Free Limit |
+|--------|-----------|
+| Requests | **100,000/day** |
+| Duration (compute) | **13,000 GB-s/day** |
+| Storage per account | 5 GB (SQLite-backed) |
+| Storage per Durable Object | 10 GB max |
+| Max classes per account | 100 |
+| WebSocket message size | 32 MiB |
+| CPU per request | 30 seconds |
+| Storage backend | **SQLite only** on Free plan |
+
+### 2.8 Queues (Message Queue)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Operations per day | **10,000** (reads + writes + deletes) |
+| Maximum queues | 10,000 |
+| Message retention | **24 hours** (vs 14 days on Paid) |
+| Event subscriptions | Unlimited |
+
+### 2.9 Workers AI
+
+| Metric | Free Limit |
+|--------|-----------|
+| Neurons per day | **10,000** |
+| Cost beyond free | N/A on Free plan (upgrade needed) |
+| Models available | All public models |
+
+### 2.10 Vectorize (Vector Database)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Queried vector dimensions | **30 million/month** |
+| Stored vector dimensions | **5 million** |
+| Indexes per account | 100 |
+| Max vectors per index | 10,000,000 |
+| Max dimensions | 1,536 (32-bit precision) |
+
+### 2.11 Turnstile (Bot Protection / CAPTCHA Alternative)
+
+| Metric | Free Limit |
+|--------|-----------|
+| Challenges/verifications | **Unlimited** |
+| Widgets | Up to 20 |
+| Hostnames per widget | 10 |
+| Analytics lookback | 7 days |
+| WCAG compliance | AAA |
+| Widget types | Non-interactive, Managed, Invisible |
+
+### 2.12 Web Analytics
+
+| Metric | Free Limit |
+|--------|-----------|
+| Sites/domains | Unlimited |
+| Events | Included (no sampling) |
+| Cost | **FREE** |
+| Client-side JS required | Yes (lightweight ~15KB) |
+
+### 2.13 Email Routing
+
+| Metric | Free Limit |
+|--------|-----------|
+| Destination addresses | 200 |
+| Rules | Multiple per zone |
+| Cost | **FREE** |
+
+### 2.15 Resend (Transactional Email Service)
+
+| Metric | Free Limit |
+|--------|------------|
+| Transactional emails | **3,000/month** |
+| Daily sending limit | **100/day** |
+| Custom domains | 1 |
+| API keys | Unlimited |
+| Webhooks | ✅ |
+| Email templates (React) | ✅ |
+| Batch sending | ✅ |
+| SMTP fallback | Available (but use HTTP API on Workers) |
+| NPM package | `resend` |
+| Cloudflare Workers compatible | ✅ (official tutorial) |
+
+### 2.14 Other Free Services
+
+| Service | Free? | Notes |
+|---------|-------|-------|
+| SSL/TLS | ✅ | Universal SSL, automatic HTTPS |
+| DDoS Protection | ✅ | Enterprise-grade, unmetered |
+| CDN (300+ cities) | ✅ | Global edge network |
+| DNS | ✅ | Authoritative DNS, fast |
+| Page Rules | ✅ | 3 free rules |
+| Firewall Rules | ✅ | 5 free rules |
+| Browser Rendering | ✅ | 10 min/day, 3 concurrent |
+| Analytics Engine | ✅ | Custom metrics from Workers |
+| Cloudflare Tunnel | ✅ | Expose local services |
+| Zero Trust (50 users) | ✅ | Identity-aware proxy |
+
+---
+
+## 3. SUPABASE FREE TIER — EXACT LIMITS
+
+> For secured PostgreSQL with RLS, Realtime, Auth, and Storage.
+
+| Metric | Free Limit |
+|--------|-----------|
+| Projects | **2 active** (pause after 7 days inactivity) |
+| PostgreSQL database size | **500 MB** |
+| Auth MAUs (monthly active users) | **50,000** |
+| File storage | **1 GB** |
+| Edge Functions invocations | **500,000/month** |
+| Database egress | **5 GB/month** |
+| Storage egress | **5 GB/month** |
+| Realtime messages | **2 million/month** |
+| Realtime concurrent connections | ~200 |
+| RLS policies | **Unlimited** |
+| API requests | Unlimited |
+
+### Supabase Use Cases in cf-astro
+
+| Use Case | Why Supabase (not D1) |
+|----------|----------------------|
+| User authentication | Supabase Auth with JWT, social logins, magic links |
+| Row Level Security | Built-in PostgreSQL RLS for multi-tenant data |
+| Realtime subscriptions | Live booking status updates via WebSockets |
+| Complex relational queries | JOINs, CTEs, full-text search (PostgreSQL) |
+| Private file storage | Auth-gated uploads with signed URLs |
+| Admin panel data | Complex admin queries with auth context |
+
+---
+
+## 4. UPSTASH FREE TIER — EXACT LIMITS
+
+> For Redis caching, rate limiting, and session management.
+
+| Metric | Free Limit |
+|--------|-----------|
+| Commands per day | **10,000** |
+| Max data size | **256 MB** |
+| Concurrent connections | 10 |
+| Databases | 1 |
+| Regions | 1 (single region) |
+| Persistence | Yes (disk-backed) |
+
+### Upstash Use Cases in cf-astro
+
+| Use Case | Why Upstash (not KV) |
+|----------|---------------------|
+| API rate limiting | Sliding window counters with TTL |
+| Session tokens | Short-lived session state with auto-expiry |
+| Form submission dedup | Idempotency keys for double-submit prevention |
+| Cache warming | Pre-computed data with TTL invalidation |
+
+### When to Use KV vs Upstash
+
+| Feature | Cloudflare KV | Upstash Redis |
+|---------|---------------|---------------|
+| Read latency | Ultra-low (edge) | Low (~5ms) |
+| Write consistency | Eventually consistent | Strongly consistent |
+| Data structures | Key-value only | Sorted sets, lists, hashes, pub/sub |
+| TTL support | Yes | Yes (more granular) |
+| Free reads/day | 100,000 | 10,000 commands total |
+| Best for | Config, feature flags, cached pages | Rate limiting, sessions, counters |
+
+---
+
+## 5. ARCHITECTURE — DUAL DATABASE STRATEGY
+
+### D1 + Supabase Coexistence
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     CLOUDFLARE EDGE                          │
+│                                                              │
+│  Astro Pages (SSG) ──→ CDN (zero compute)                   │
+│                                                              │
+│  Workers (SSR/API) ──→ D1 (fast edge queries)               │
+│                    ──→ Hyperdrive ──→ Supabase PG (complex)  │
+│                    ──→ KV (edge cache)                       │
+│                    ──→ R2 (images/files)                     │
+│                    ──→ Upstash Redis (rate limit/sessions)   │
+│                    ──→ Queues (async email/notifications)    │
+│                    ──→ Durable Objects (realtime/websocket)  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Database Responsibility Matrix
+
+| Data | Store | Rationale |
+|------|-------|-----------|
+| Bookings (core) | **D1** | Edge-fast writes, simple schema, no auth needed |
+| Booking pets | **D1** | Linked to bookings, simple FK |
+| Consent records | **D1** | Legal compliance, simple insert |
+| Privacy/ARCO requests | **D1** | Simple status tracking |
+| Site settings | **D1** | KV-like settings cache |
+| User accounts/profiles | **Supabase** | Auth + RLS required |
+| Admin users | **Supabase** | Auth + role-based access |
+| Gallery metadata | **Supabase** | Complex queries, admin CRUD |
+| Testimonials | **Supabase** | Admin-managed, moderation |
+| Analytics aggregates | **Supabase** | Complex time-series queries |
+| Audit logs | **Supabase** | RLS-protected, retention policies |
+
+### Storage Responsibility Matrix
+
+| Content | Store | Rationale |
+|---------|-------|-----------|
+| Pet photos (public gallery) | **R2** | Zero egress, CDN-served, 10 GB free |
+| Hero/marketing images | **R2** | Public, high-read volume |
+| Icons, fonts, static assets | **R2 / Pages public/** | Build-time bundled |
+| Private medical documents | **Supabase Storage** | Auth-gated signed URLs |
+| Admin-uploaded files | **Supabase Storage** | RLS-controlled access |
+
+---
+
+## 6. TECHNOLOGY STACK DECISIONS
+
+### 6.1 Framework: Astro 5.7+ (NOT Next.js)
+
+- `output: 'static'` by default (zero JS marketing pages)
+- Individual routes opt into SSR with `export const prerender = false`
+- Island Architecture: Only interactive components ship JS
+- Native Cloudflare adapter with binding access via `Astro.locals.runtime.env`
+
+### 6.2 Interactive UI: Astro Island Architecture — Framework Options
+
+Astro supports **multiple UI frameworks as islands** — interactive components that hydrate independently on an otherwise static page. Each island ships only its own framework runtime. You can even mix frameworks on the same page.
+
+#### Official Astro Integrations (All Cloudflare Workers/Pages Compatible)
+
+| Framework | Package | Min Bundle Size | Hydration Speed | Edge Rating | Best For |
+|-----------|---------|----------------|-----------------|-------------|----------|
+| **Preact** ⭐ | `@astrojs/preact` | ~10-15 KB | Fast | ⭐⭐⭐⭐⭐ | React-like islands, forms, wizards |
+| **Solid** | `@astrojs/solid-js` | ~8-12 KB | Very fast (fine-grained) | ⭐⭐⭐⭐⭐ | High-perf reactive UIs, dashboards |
+| **Svelte** | `@astrojs/svelte` | ~5-10 KB (compiled) | Fastest (no runtime) | ⭐⭐⭐⭐⭐ | Compiled output, animations, transitions |
+| **Lit** | `@astrojs/lit` | ~5-8 KB | Very fast (web standards) | ⭐⭐⭐⭐⭐ | Web Components, design systems |
+| **React** | `@astrojs/react` | ~40-60 KB (React 19) | Medium (virtual DOM) | ⭐⭐⭐ | Complex ecosystem libs (only if needed) |
+| **Vue** | `@astrojs/vue` | ~30-50 KB (Vue 3) | Fast (reactive) | ⭐⭐⭐ | Vue ecosystem, Nuxt migration |
+| **Alpine.js** | No integration needed | ~10-20 KB (script tag) | Instant (no hydration) | ⭐⭐⭐⭐⭐ | Simple toggles, dropdowns, declarative |
+| **HTMX** | No integration needed | ~14 KB (script tag) | Instant | ⭐⭐⭐⭐⭐ | Server-driven HTML, form enhancements |
+
+#### Primary Choice: **Preact** (Default Island Framework)
+
+- 3KB gzipped vs 45KB+ for React runtime
+- Full React API compatibility via `preact/compat`
+- `@astrojs/preact` integration with `{ compat: true }`
+- Use for: Booking wizard, contact form, interactive galleries, any complex state
+
+#### Secondary Choice: **Alpine.js** (Lightweight Enhancement)
+
+- Zero build step — add via `<script src>` in Astro layouts
+- Perfect for simple toggles (mobile menu, FAQ accordion, modals)
+- Declarative via HTML attributes (`x-data`, `x-show`, `x-on:click`)
+- Can coexist alongside Preact islands on the same page
+
+#### When to Use Which Framework
+
+| Scenario | Use | Why |
+|----------|-----|-----|
+| Multi-step booking wizard | **Preact** (`client:idle`) | Complex form state, validation |
+| Date picker / calendar | **Preact** (`client:visible`) | Rich interaction, keyboard nav |
+| Mobile hamburger menu | **Alpine.js** | Simple toggle, ~0 KB island overhead |
+| FAQ accordion | **Alpine.js** | Declarative expand/collapse |
+| Cookie consent banner | **Preact** (`client:idle`) | Consent state management |
+| Image gallery lightbox | **Preact** (`client:visible`) | Touch gestures, lazy load |
+| Language switcher | **Alpine.js** | Simple dropdown |
+| Real-time availability | **Preact** (`client:only="preact"`) | WebSocket + state |
+
+#### Hydration Directives (Critical for Performance)
+
+| Directive | When JS Loads | Use For |
+|-----------|--------------|----------|
+| `client:load` | Immediately | Above-fold critical interactivity |
+| `client:idle` | After page idle | Below-fold forms, wizards |
+| `client:visible` | When scrolled into view | Galleries, maps, carousels |
+| `client:media` | When media query matches | Mobile-only components |
+| `client:only="preact"` | Client-only (no SSR) | WebSocket, localStorage-dependent |
+
+### 6.3 CSS: Tailwind CSS v3 (NOT v4)
+
+- TW v4 causes silent SSR build crashes with Astro + Cloudflare adapter
+- Use `@astrojs/tailwind` official integration
+- CSS variables for design tokens, extended in `tailwind.config.mjs`
+
+### 6.4 Validation: Zod v3 (NOT v4)
+
+- Zod v4 conflicts with Astro's internal Zod v3 dependency
+- Pin to `^3.25.0` in package.json
+
+### 6.5 Email: Resend HTTP API (NOT SMTP/Nodemailer)
+
+- Cloudflare Workers cannot open raw TCP/SMTP sockets
+- Use `resend` npm package (uses HTTP API under the hood) or direct `fetch()` to Resend REST API
+- Official Cloudflare tutorial: https://developers.cloudflare.com/workers/tutorials/send-emails-with-resend/
+- Store `RESEND_API_KEY` in `.dev.vars` (local) and `wrangler secret put RESEND_API_KEY` (production)
+- Free tier: **3,000 emails/month**, **100 emails/day**
+- Supports React email templates via `@react-email/components` (renders to HTML server-side)
+- Can pair with **Cloudflare Queues** for reliable async delivery with retry logic
+
+### 6.6 Image Processing: Passthrough (NOT Sharp)
+
+- Workers cannot run `sharp` (Node.js native module)
+- `image: { service: passthroughImageService() }` in astro.config.ts
+- Pre-optimize images before R2 upload (use squoosh/tinypng)
+
+### 6.7 Database & Service Access from Workers
+
+```
+Cloudflare D1:     Astro.locals.runtime.env.DB
+Cloudflare R2:     Astro.locals.runtime.env.IMAGES
+Cloudflare KV:     Astro.locals.runtime.env.KV
+Supabase (PG):     Hyperdrive → Astro.locals.runtime.env.HYPERDRIVE
+Upstash Redis:     @upstash/redis with REST API (no TCP needed)
+Queues:            Astro.locals.runtime.env.QUEUE
+Resend Email:      new Resend(env.RESEND_API_KEY)  — via `resend` npm
+```
+
+### 6.8 Cloudflare Framework Support Comparison (Why Astro Won)
+
+The following frameworks have official or community Cloudflare deployment support:
+
+| Framework | Official CF Adapter? | Deployment Target | Node.js Needed? | Best For | CF Rating |
+|-----------|---------------------|-------------------|-----------------|----------|----------|
+| **Astro** ⭐ | ✅ Official (`@astrojs/cloudflare`) | Pages + Workers | No (edge-native) | Content sites, islands, hybrid SSG/SSR | ⭐⭐⭐⭐⭐ |
+| **SvelteKit** | ✅ Official | Pages | No | Full-stack apps, compiled output | ⭐⭐⭐⭐ |
+| **Remix** | ✅ Official | Pages | No | Data-heavy apps, nested layouts | ⭐⭐⭐⭐ |
+| **Next.js** | ❌ Community (`@opennextjs/cloudflare`) | Pages/Workers | Partial (Node compat layer) | Complex React apps (better on Vercel) | ⭐⭐ |
+| **Nuxt** | ❌ Community | Pages | Partial | Vue ecosystem apps | ⭐⭐ |
+| **Qwik** | ⚠️ Partial | Workers | No (resumable) | Performance-critical SPAs | ⭐⭐⭐ |
+| **Hono** | ✅ Native (built for Workers) | Workers | No | API backends, microservices | ⭐⭐⭐⭐⭐ |
+
+#### Why NOT Next.js on Cloudflare?
+
+- No official adapter — relies on community `@opennextjs/cloudflare`
+- Workers use a **Node.js-compatible subset**, not full Node.js (no `fs`, no long-running processes)
+- Cold start overhead is higher with React SSR on edge
+- Feature parity gaps: ISR, middleware, Image Optimization all behave differently
+- **Verdict:** Next.js runs best on Vercel; Cloudflare's native choice is Astro
+
+#### Why Astro is the #1 Choice for Cloudflare (2026)
+
+- Cloudflare **acquired Astro** in January 2026 — deepest integration of any framework
+- Zero-JS by default means most pages are pure static (CDN-served, no Worker compute)
+- Island architecture = ship JS only for interactive parts (Preact islands)
+- Full access to all Cloudflare bindings (D1, R2, KV, Queues, DO) via adapter
+- `workerd` runtime parity between dev and production
+- Astro 6 (March 2026) further optimizes Cloudflare edge deploys
+
+### 6.9 Backend API Framework: Hono (Optional)
+
+[Hono](https://hono.dev) is an ultra-fast web framework built specifically for Cloudflare Workers.
+
+- Native Workers support (built for `workerd` runtime)
+- ~14 KB ultra-lightweight
+- Express-like API with middleware support
+- Built-in helpers: JWT validation, CORS, rate limiting, OpenAPI
+- Can be used alongside Astro API routes for complex backend logic
+
+**When to use Hono:** If API route logic in Astro becomes too complex, extract into a dedicated Hono Worker as a microservice. For simple API routes (booking submission, email send), Astro's built-in API routes are sufficient.
+
+### 6.10 Node.js Compatibility in Cloudflare Workers
+
+- Workers provide a **Node.js-compatible subset** (expanded greatly in 2025)
+- Hundreds of native Node APIs implemented in TypeScript/C++ (not polyfills)
+- Compatible: `crypto`, `Buffer`, `URL`, `TextEncoder`, `streams`, npm packages using `fetch`
+- NOT compatible: `fs`, `path` (filesystem), `child_process`, `net` (TCP sockets), `cluster`
+- Enable via `node_compat = true` in wrangler.toml (already configured)
+- **Rule:** Always test npm packages in Workers before assuming compatibility
+
+### 6.11 ORM: Drizzle ORM (Required for Database Setups)
+
+- **Standard ORM**: All database interactions (whether D1 or Supabase PostgreSQL via Hyperdrive) **must** use **Drizzle ORM**.
+- **Why Drizzle over Prisma/Others**:
+  - Extremely lightweight and edge-compatible (perfect for Cloudflare Workers/Pages).
+  - No Rust engines or heavy binaries; runs natively on V8 isolates.
+  - SQL-like syntax gives full control over performance-critical edge queries.
+  - Excellent TypeScript support, schema management, and type safety.
+- **D1 Migrations**: Use `drizzle-kit` to generate raw SQL migrations, which are then applied using `wrangler d1 execute`.
+
+---
+
+## 7. INTEGRATION PLAN — SERVICES TO ADD
+
+### Phase 1: Core (Current)
+- [x] Astro + Cloudflare adapter
+- [x] D1 database + schema
+- [x] R2 bucket binding
+- [x] KV namespace binding
+- [x] Resend email (HTTP API via `resend` SDK)
+- [x] i18n (es/en)
+- [x] PostHog reverse proxy
+- [x] Security headers
+
+### Phase 2: Enhanced Data Layer
+- [ ] **Supabase PostgreSQL** via Hyperdrive
+  - Create Hyperdrive config pointing to Supabase connection string
+  - Add `[[hyperdrive]]` binding to wrangler.toml
+  - Use `pg` driver with Hyperdrive for complex queries
+- [ ] **Supabase Auth**
+  - JWT validation in Workers (no Supabase SDK needed server-side)
+  - Client-side `@supabase/supabase-js` for auth flows
+- [ ] **Supabase RLS**
+  - Policies on all user-facing tables
+  - Admin role escalation via custom claims
+
+### Phase 3: Performance & Reliability
+- [ ] **Upstash Redis**
+  - `@upstash/redis` REST client (works in Workers)
+  - Rate limiting middleware for API routes
+  - Booking form idempotency keys
+- [ ] **Cloudflare Queues**
+  - Async email delivery (decouple from request)
+  - Booking notification pipeline
+  - Analytics event batching
+- [ ] **Cloudflare Durable Objects**
+  - Real-time booking availability (WebSocket)
+  - Admin live dashboard (if needed)
+
+### Phase 4: Intelligence (Optional)
+- [ ] **Workers AI** (10,000 neurons/day free)
+  - Auto-translate booking confirmations
+  - AI-powered FAQ responses
+- [ ] **Vectorize**
+  - Semantic search across FAQ/content
+  - Pet breed recommendations
+
+### Phase 5: Observability (Added Last)
+- [ ] **PostHog** — Full client-side analytics
+- [ ] **Sentry** — Browser error tracking (`@sentry/browser`)
+- [ ] **BetterStack** — Log aggregation and uptime monitoring
+
+---
+
+## 8. CODE QUALITY RULES
+
+### 8.1 Zero-Comment Code
+Code must be self-documenting via clear naming. If logic is complex, create a sidecar `.md` file in the same directory.
+
+### 8.2 Strict TypeScript
+- Use `interface` and `type` explicitly
+- `any` type is **FORBIDDEN**
+- All environment bindings typed in `env.d.ts`
+
+### 8.3 File Naming
+All file names must be unique and descriptive across the project:
+- ✅ `BookingWizard.tsx`, `HeroSection.astro`, `ContactForm.tsx`
+- ❌ `Form.tsx` (ambiguous), `index.tsx` (without context)
+
+### 8.4 Component Architecture
+- **Astro components** (`.astro`) for static sections (zero JS shipped)
+- **Preact islands** (`.tsx`) only for interactive UI (forms, wizards, toggles)
+- Use `client:idle` for below-fold interactivity
+- Use `client:visible` for lazy-loaded sections
+- Use `client:only="preact"` for client-only components
+
+### 8.5 Error Handling
+- Never show white screens; use Astro error pages
+- API routes return structured JSON errors with proper HTTP status codes
+- Errors logged silently to Sentry/PostHog; users see friendly messages
+
+---
+
+## 9. SECURITY RULES
+
+### 9.1 Secrets Management
+- Local dev secrets in `.dev.vars` (gitignored)
+- Production secrets via `wrangler secret put <KEY>`
+- Never commit secrets; `.dev.vars` is in `.gitignore`
+
+### 9.2 Input Validation
+- All API endpoints validate with Zod schemas before processing
+- Sanitize user input before D1/Supabase queries
+- Use parameterized queries (prepared statements) — never string concatenation
+
+### 9.3 Bot Protection
+- Cloudflare Turnstile on all forms (booking, contact, ARCO)
+- Server-side token verification via Turnstile Siteverify API
+- Rate limiting via Upstash Redis on all API endpoints
+
+### 9.4 Content Security Policy
+Defined in `public/_headers` for all origins:
+- `default-src 'self'`
+- `script-src 'self' 'unsafe-inline' *.posthog.com challenges.cloudflare.com`
+- `connect-src 'self' *.posthog.com *.ingest.us.sentry.io *.supabase.co`
+- `img-src 'self' blob: data: *.r2.dev`
+
+### 9.5 Auth Architecture
+- Supabase Auth for user identity (JWT-based)
+- JWT validation in Workers without Supabase SDK (verify with public key)
+- RLS on all Supabase tables - no admin bypass in client code
+- Admin routes protected server-side before rendering
+
+---
+
+## 10. PERFORMANCE BUDGET
+
+### Targets
+| Metric | Target |
+|--------|--------|
+| Lighthouse Performance (Mobile) | ≥ 95 |
+| First Contentful Paint | < 1.0s |
+| Largest Contentful Paint | < 1.5s |
+| Total Blocking Time | < 50ms |
+| Cumulative Layout Shift | < 0.05 |
+| Marketing pages JS shipped | **0 KB** (Astro static) |
+| Interactive pages JS (booking) | < 50 KB (Preact island) |
+
+### Free Tier Budget (Daily)
+| Resource | Budget | Headroom |
+|----------|--------|----------|
+| Workers requests | 100,000/day | ~3,000 visits/day at ~30 req/visit |
+| D1 reads | 5,000,000/day | ~50,000 complex queries/day |
+| D1 writes | 100,000/day | ~500 bookings/day |
+| KV reads | 100,000/day | Config/cache lookups |
+| R2 reads | 333,000/day (~10M/month) | All image serving |
+| Upstash commands | 10,000/day | Rate limiting + sessions |
+
+---
+
+## 11. DEPLOYMENT RULES
+
+### Build & Deploy
+```bash
+# Development
+astro dev                          # Starts with local D1/R2/KV bindings
+
+# Build
+astro build                        # Outputs to ./dist
+
+# Deploy
+astro build && wrangler pages deploy ./dist
+
+# D1 Migrations
+wrangler d1 execute madagascar-db --local --file=./db/migrations/XXXX.sql
+wrangler d1 execute madagascar-db --remote --file=./db/migrations/XXXX.sql
+```
+
+### Environment
+- `wrangler.toml` — All bindings (D1, R2, KV, Hyperdrive, Queues)
+- `.dev.vars` — Local secrets (gitignored)
+- `wrangler secret put <KEY>` — Production secrets
+
+### Git Workflow
+- `main` branch = production
+- Feature branches for development
+- Build + `astro check` must pass before merge
+
+---
+
+## 12. FUTURE CONSIDERATIONS
+
+### Cloudflare Services to Evaluate Later
+| Service | Use Case | Free? |
+|---------|----------|-------|
+| Email Workers | Inbound email processing | ✅ |
+| Analytics Engine | Custom high-cardinality metrics | ✅ |
+| Cloudflare Tunnel | Expose local dev to team | ✅ |
+| Zero Trust (50 users) | Admin panel access control | ✅ |
+| Browser Rendering | Screenshot generation | ✅ (10 min/day) |
+| Containers | Heavy compute jobs | ❌ (Paid only) |
+
+### Scaling Path (If Free Tier Exceeded)
+1. **Workers Paid ($5/month):** Unlimited requests, 5 min CPU, 500 Workers
+2. **D1 Paid:** 25 billion reads/month, 50M writes/month included
+3. **R2 Paid:** $0.015/GB/month storage, zero egress always
+
+---
+
+## 13. MCP & SKILL USAGE GUIDE
+
+When working on cf-astro, always use these resources BEFORE writing code:
+
+### 13.1 Free MCP Tools (Use Freely)
+
+| Resource | Cost | When to Use |
+|----------|------|-------------|
+| `@mcp:cloudflare-docs` | **FREE** | API signatures, binding types, configuration options |
+| `@mcp:cloudflare-bindings` | **FREE** | Runtime binding access patterns, env types |
+| `@[.agents/skills/astro/SKILL.md]` | **FREE** | Astro config, CLI commands, project structure |
+| `@[.agents/skills/cloudflare/SKILL.md]` | **FREE** | Cloudflare product selection, decision trees |
+| `@[nextjs-app/.agents/skills/brainstorming/SKILL.md]` | **FREE** | Design process (brainstorm → plan → build) |
+| Supabase MCP | **FREE** | Database schema, RLS policies, Auth setup |
+| Vercel MCP | **FREE** | Reference only (nextjs-app deployment context) |
+| Sentry MCP | **FREE** | Error tracking setup and monitoring |
+
+### 13.2 ⚠️ Perplexity MCP — PAID SERVICE (Use Sparingly)
+
+`@mcp:perplexity-ask` is a **PAID service** that costs real money per query. It must be used with extreme discipline:
+
+#### ✅ ALLOWED — Use Perplexity ONLY when:
+- Researching **new Cloudflare features** or limits that Cloudflare Docs MCP cannot answer
+- Verifying **breaking changes** or deprecations in dependencies (Astro, Preact, Resend, etc.)
+- Investigating **complex architectural decisions** with no clear documentation
+- The user **explicitly requests** Perplexity research (e.g., "use Perplexity to find...")
+- Debugging an issue that **all other free MCP tools and web search have failed** to resolve
+
+#### ❌ FORBIDDEN — NEVER use Perplexity for:
+- Questions answerable by `@mcp:cloudflare-docs` (use that first, always)
+- Simple API syntax or configuration lookups (use docs or `search_web`)
+- General coding patterns (use pre-trained knowledge)
+- Anything documented in RULES.md, SKILL.md files, or project documentation
+- Routine development tasks (component building, CSS, TypeScript types)
+- Questions already answered in this conversation
+
+#### 🔄 Priority Order (Always follow this cascade):
+1. **RULES.md** — Check this file first
+2. **SKILL.md files** — Astro, Cloudflare skills (free)
+3. **`@mcp:cloudflare-docs`** — Official Cloudflare documentation (free)
+4. **`@mcp:cloudflare-bindings`** — Binding patterns and types (free)
+5. **`search_web`** — General web search (free)
+6. **Pre-trained knowledge** — For common patterns (free)
+7. **`@mcp:perplexity-ask`** — LAST RESORT only (💰 paid)
+
+**Remember: Prefer free retrieval tools over Perplexity. Every Perplexity call costs money.**
+
+---
+
+## 14. TOTAL MONTHLY COST BREAKDOWN — $0 COMMERCIAL PROJECT
+
+> Proof that a professional, production-grade application can run at exactly **$0/month**.
+
+| Service | What We Use | Free Tier | Monthly Cost |
+|---------|------------|-----------|-------------|
+| **Cloudflare Pages** | Hosting + CDN + SSL | Unlimited bandwidth, 500 builds | **$0** |
+| **Cloudflare Workers** | SSR + API routes | 100K req/day | **$0** |
+| **Cloudflare D1** | Primary database | 5M reads + 100K writes/day, 5 GB | **$0** |
+| **Cloudflare R2** | Image/asset storage | 10 GB, 10M reads/month, $0 egress | **$0** |
+| **Cloudflare KV** | Edge cache | 100K reads/day, 1 GB | **$0** |
+| **Cloudflare Turnstile** | Bot protection | Unlimited challenges | **$0** |
+| **Cloudflare Web Analytics** | Traffic analytics | Unlimited | **$0** |
+| **Cloudflare Hyperdrive** | DB connection pooling | Included free | **$0** |
+| **Cloudflare Queues** | Async email delivery | 10K ops/day | **$0** |
+| **Cloudflare DNS** | Domain resolution | Unlimited | **$0** |
+| **Cloudflare SSL** | HTTPS certificates | Universal SSL | **$0** |
+| **Cloudflare DDoS** | Attack protection | Enterprise-grade, unmetered | **$0** |
+| **Resend** | Transactional email | 3,000/month, 100/day | **$0** |
+| **Supabase** | Auth + PostgreSQL + Storage | 500 MB DB, 1 GB storage, 50K MAUs | **$0** |
+| **Upstash** | Redis (rate limiting) | 10K commands/day, 256 MB | **$0** |
+| **PostHog** | Product analytics | 1M events/month | **$0** |
+| **Sentry** | Error tracking | 5K errors/month | **$0** |
+| **GitHub** | Source control + CI | Unlimited private repos | **$0** |
+| | | **TOTAL MONTHLY COST** | **$0.00** |
+
+### Only Paid Service in Our Stack
+
+| Service | Cost | Mitigation |
+|---------|------|------------|
+| **Domain name** | ~$10-15/year | One-time, unavoidable for any real business |
+| **Perplexity MCP** (dev tool) | Per-query | Minimize usage — see Section 13.2 |
+
+**Bottom line:** A fully functional, SEO-optimized, legally compliant, multi-language commercial website running on enterprise-grade infrastructure for the cost of a domain name.
+
+---
+
+*End of Rules. These constraints must be acknowledged and followed for every task in cf-astro.*
