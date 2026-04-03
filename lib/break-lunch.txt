@@ -1,6 +1,6 @@
 # CF-ASTRO PROJECT — OPERATIONAL RULES & ARCHITECTURE BIBLE
 
-> **Last Updated:** 2026-03-27
+> **Last Updated:** 2026-03-31
 > **Research Sources:** Cloudflare Docs MCP, Perplexity MCP, Cloudflare Bindings MCP, Official Documentation
 
 ---
@@ -45,7 +45,7 @@ This is the **STRICTEST** rule and MUST be followed at ALL times:
 |----------|-------|
 | **Name** | cf-astro (Madagascar Pet Hotel — Cloudflare Edition) |
 | **Purpose** | Cloudflare-native pet hotel website equivalent to nextjs-app |
-| **Framework** | Astro 5.7+ with `@astrojs/cloudflare` adapter |
+| **Framework** | Astro 6.0+ with `@astrojs/cloudflare` adapter |
 | **UI Islands** | Preact (3KB, React-compatible) for interactive components |
 | **Hosting** | Cloudflare Pages (unlimited bandwidth, free) |
 | **Database** | Cloudflare D1 (SQLite) + Supabase PostgreSQL (via Hyperdrive) |
@@ -57,7 +57,7 @@ This is the **STRICTEST** rule and MUST be followed at ALL times:
 | **Error Tracking** | Sentry (browser SDK) |
 | **Logging** | BetterStack (to be added last) |
 | **i18n** | Astro built-in (es/en with prefix routing) |
-| **CSS** | Tailwind CSS v3 via `@astrojs/tailwind` |
+| **CSS** | Tailwind CSS v4 via `@tailwindcss/vite` |
 
 ---
 
@@ -331,17 +331,20 @@ This is the **STRICTEST** rule and MUST be followed at ALL times:
 
 | Data | Store | Rationale |
 |------|-------|-----------|
-| Bookings (core) | **D1** | Edge-fast writes, simple schema, no auth needed |
-| Booking pets | **D1** | Linked to bookings, simple FK |
-| Consent records | **D1** | Legal compliance, simple insert |
-| Privacy/ARCO requests | **D1** | Simple status tracking |
-| Site settings | **D1** | KV-like settings cache |
+| Bookings (core) | **Supabase** | Contains PII (name, email, phone) — RLS-protected |
+| Booking pets | **Supabase** | Linked to bookings, RLS-protected FK |
+| Consent records | **Supabase** | Legal compliance, PII-adjacent, RLS-protected |
+| Privacy/ARCO requests | **Supabase** | Contains PII (name, email), RLS-protected |
+| Booking quality metadata | **Supabase** | Linked to bookings, RLS-protected |
+| Site settings | **D1** | KV-like settings cache, no PII |
 | User accounts/profiles | **Supabase** | Auth + RLS required |
 | Admin users | **Supabase** | Auth + role-based access |
 | Gallery metadata | **Supabase** | Complex queries, admin CRUD |
 | Testimonials | **Supabase** | Admin-managed, moderation |
 | Analytics aggregates | **Supabase** | Complex time-series queries |
 | Audit logs | **Supabase** | RLS-protected, retention policies |
+
+> **PII Security Rule:** Any table containing personally identifiable information (name, email, phone, address) MUST be stored in Supabase with RLS enabled. D1 is reserved for non-PII operational data only.
 
 ### Storage Responsibility Matrix
 
@@ -357,12 +360,13 @@ This is the **STRICTEST** rule and MUST be followed at ALL times:
 
 ## 6. TECHNOLOGY STACK DECISIONS
 
-### 6.1 Framework: Astro 5.7+ (NOT Next.js)
+### 6.1 Framework: Astro 6.0+ (NOT Next.js)
 
 - `output: 'static'` by default (zero JS marketing pages)
 - Individual routes opt into SSR with `export const prerender = false`
 - Island Architecture: Only interactive components ship JS
-- Native Cloudflare adapter with binding access via `Astro.locals.runtime.env`
+- Native Cloudflare adapter with binding access via `import { env } from "cloudflare:workers"`
+- Content uses Astro 6 `glob()` loaders in `src/content.config.ts`, rendered via `await render(post)`
 
 ### 6.2 Interactive UI: Astro Island Architecture — Framework Options
 
@@ -418,18 +422,18 @@ Astro supports **multiple UI frameworks as islands** — interactive components 
 | `client:media` | When media query matches | Mobile-only components |
 | `client:only="preact"` | Client-only (no SSR) | WebSocket, localStorage-dependent |
 
-### 6.3 CSS: Tailwind CSS v3 (NOT v4)
+### 6.3 CSS: Tailwind CSS v4
 
-- TW v4 causes silent SSR build crashes with Astro + Cloudflare adapter
-- Use `@astrojs/tailwind` official integration
-- CSS variables for design tokens, extended in `tailwind.config.mjs`
+- Tailwind CSS v4 runs via `@tailwindcss/vite` as a Vite plugin inside `astro.config.ts`
+- Uses `@theme extend` in `src/styles/global.css` for design tokens
+- When styling scoped Astro components in `<style>`, MUST import theme variables via `@reference "../../styles/global.css";`
 
 ### 6.4 Validation: Zod v3 (NOT v4)
 
 - Zod v4 conflicts with Astro's internal Zod v3 dependency
 - Pin to `^3.25.0` in package.json
 
-### 6.5 Email: Resend HTTP API (NOT SMTP/Nodemailer)
+### 6.5 Email: Resend HTTP API via Queue (NOT SMTP/Nodemailer/Brevo)
 
 - Cloudflare Workers cannot open raw TCP/SMTP sockets
 - Use `resend` npm package (uses HTTP API under the hood) or direct `fetch()` to Resend REST API
@@ -437,25 +441,54 @@ Astro supports **multiple UI frameworks as islands** — interactive components 
 - Store `RESEND_API_KEY` in `.dev.vars` (local) and `wrangler secret put RESEND_API_KEY` (production)
 - Free tier: **3,000 emails/month**, **100 emails/day**
 - Supports React email templates via `@react-email/components` (renders to HTML server-side)
-- Can pair with **Cloudflare Queues** for reliable async delivery with retry logic
+- **Brevo is NOT used in this project** — Resend is the only email provider
+
+> ⚠️ **QUEUE-FIRST DELIVERY (Active):** All transactional emails are sent **asynchronously via Cloudflare Queues**, NOT inline in API routes. API routes push a typed message to `env.EMAIL_QUEUE`; the sidecar `cf-astro-email-consumer` Worker processes the queue and calls Resend. See **Section 6.13** for full architecture.
+>
+> **If you modify email templates, Resend config, or add new email types:**
+> 1. Update `src/lib/email/queue-types.ts` (message type definitions)
+> 2. Update `queue-worker/src/index.ts` (consumer logic + email HTML builders)
+> 3. Redeploy the consumer worker: `cd queue-worker && npx wrangler deploy`
 
 ### 6.6 Image Processing: Passthrough (NOT Sharp)
 
 - Workers cannot run `sharp` (Node.js native module)
-- `image: { service: passthroughImageService() }` in astro.config.ts
+- Use `image: { service: passthroughImageService() }` in `astro.config.ts`
+- **Crucial:** Using `passthroughImageService()` explicitly resolves `ASSETS` binding namespace collisions during Astro's internal prerendering phase.
 - Pre-optimize images before R2 upload (use squoosh/tinypng)
 
 ### 6.7 Database & Service Access from Workers
 
+Always import `env` directly. `Astro.locals.runtime.env` is deprecated and causes type conflicts.
+
+```typescript
+import { env } from "cloudflare:workers";
+
+// Usage:
+env.DB             // Cloudflare D1 (non-PII only)
+env.IMAGES         // Cloudflare R2
+env.ARCO_DOCS      // Cloudflare R2 (ARCO identity docs)
+env.KV             // Cloudflare KV
+env.EMAIL_QUEUE    // Cloudflare Queue (producer — pushes messages)
 ```
-Cloudflare D1:     Astro.locals.runtime.env.DB
-Cloudflare R2:     Astro.locals.runtime.env.IMAGES
-Cloudflare KV:     Astro.locals.runtime.env.KV
-Supabase (PG):     Hyperdrive → Astro.locals.runtime.env.HYPERDRIVE
-Upstash Redis:     @upstash/redis with REST API (no TCP needed)
-Queues:            Astro.locals.runtime.env.QUEUE
-Resend Email:      new Resend(env.RESEND_API_KEY)  — via `resend` npm
-```
+
+Supabase (PG):  Drizzle ORM + `pg` driver via Hyperdrive binding
+Upstash Redis:  `@upstash/redis` with REST API (no TCP needed)
+Resend Email:   `new Resend(env.RESEND_API_KEY)` (consumer worker only)
+
+> ⚠️ **Email is NOT called directly from API routes.** API routes push to `env.EMAIL_QUEUE`. The `cf-astro-email-consumer` worker (in `queue-worker/`) reads from the queue and calls Resend. See **Section 6.13**.
+
+### 6.12 Supabase Project Configuration
+
+| Property | Value |
+|----------|-------|
+| **Project ID** | `pklzjomfwqzricpsyrrc` |
+| **Project Name** | cf-astro |
+| **Region** | us-east-1 |
+| **Database Host** | `db.pklzjomfwqzricpsyrrc.supabase.co` |
+| **REST API** | `https://pklzjomfwqzricpsyrrc.supabase.co/rest/v1/` |
+| **RLS Enabled** | ✅ On ALL public tables |
+| **PII Storage** | Bookings, pets, consent, privacy requests |
 
 ### 6.8 Cloudflare Framework Support Comparison (Why Astro Won)
 
@@ -519,11 +552,105 @@ The following frameworks have official or community Cloudflare deployment suppor
   - Excellent TypeScript support, schema management, and type safety.
 - **D1 Migrations**: Use `drizzle-kit` to generate raw SQL migrations, which are then applied using `wrangler d1 execute`.
 
+### 6.13 Cloudflare Queues — Async Email Architecture (Active)
+
+> **Status:** ✅ Implemented and deployed (March 2026)
+
+#### Overview
+
+All transactional emails are delivered **asynchronously** via a Cloudflare Queue + sidecar consumer worker. No API route in the main Astro project calls Resend directly. This decouples email delivery from the user-facing request lifecycle — the booking/ARCO response returns instantly after DB insert.
+
+#### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  MAIN PROJECT (cf-astro — Cloudflare Pages)                     │
+│                                                                 │
+│  /api/booking.ts ──→ DB insert ──→ env.EMAIL_QUEUE.send({...})  │
+│  /api/arco/submit.ts ──→ DB + R2 ──→ env.EMAIL_QUEUE.send({...}) │
+│                                                                 │
+│  Response returns immediately (no email wait)                   │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  CLOUDFLARE QUEUE: madagascar-emails                             │
+│  Free tier: 10,000 operations/day                               │
+│  Retention: 24 hours (free plan)                                │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ push consumer (auto-batched)
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  SIDECAR WORKER: cf-astro-email-consumer (queue-worker/)        │
+│                                                                 │
+│  Receives MessageBatch → for each message:                      │
+│    ├─ booking_confirmation → 2 emails (admin + customer)        │
+│    └─ arco_admin_notification → 1 email (admin only)            │
+│                                                                 │
+│  Success → msg.ack()                                            │
+│  Failure → msg.retry() (up to 3 retries)                        │
+│  Max retries exceeded → Dead Letter Queue (madagascar-emails-dlq) │
+│                                                                 │
+│  Secret: RESEND_API_KEY (set via wrangler secret put)           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### File Map
+
+| File | Role | When to Modify |
+|------|------|----------------|
+| `src/lib/email/queue-types.ts` | **Message contract** (discriminated union) | Adding new email types |
+| `src/pages/api/booking.ts` | **Producer** — pushes `booking_confirmation` | Changing booking data shape |
+| `src/pages/api/arco/submit.ts` | **Producer** — pushes `arco_admin_notification` | Changing ARCO data shape |
+| `queue-worker/src/index.ts` | **Consumer** — builds HTML + calls Resend | Changing templates, adding types |
+| `queue-worker/wrangler.toml` | Consumer config (batch size, retries, DLQ) | Changing retry/batch behavior |
+| `wrangler.toml` (root) | Producer binding (`EMAIL_QUEUE`) | Never (already configured) |
+| `env.d.ts` | TypeScript type for `EMAIL_QUEUE` binding | Adding new message types |
+
+#### Message Types
+
+```typescript
+type EmailQueueMessage =
+  | { type: 'booking_confirmation'; data: BookingEmailPayload }
+  | { type: 'arco_admin_notification'; data: ArcoEmailPayload };
+```
+
+To add a new email type (e.g., `password_reset`, `admin_weekly_report`):
+1. Add the new variant to `EmailQueueMessage` in `src/lib/email/queue-types.ts`
+2. Add a matching `case` in the consumer's `switch` block in `queue-worker/src/index.ts`
+3. Mirror the type in the consumer (types are duplicated to keep the worker dependency-free)
+4. Push from the relevant API route: `env.EMAIL_QUEUE.send({ type: 'new_type', data: {...} })`
+
+#### Queue Configuration
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| Queue name | `madagascar-emails` | Single queue for all email types |
+| Max batch size | 10 | Process up to 10 messages per invocation |
+| Max retries | 3 | Handles transient Resend failures |
+| Dead letter queue | `madagascar-emails-dlq` | Failed messages after 3 retries are preserved |
+| Consumer worker | `cf-astro-email-consumer` | Deployed from `queue-worker/` directory |
+
+#### ⚠️ Cross-Reference Warnings
+
+> **ANY change to the following sections MUST consider the queue system:**
+>
+> | Section Changed | Queue Impact | Action Required |
+> |----------------|---------------|-----------------|
+> | **6.5** (Resend/Email config) | Consumer uses Resend SDK | Update consumer if API key format, sender domain, or SDK version changes |
+> | **6.7** (Service bindings) | `EMAIL_QUEUE` binding name | If binding name changes, update `env.d.ts`, all producers, and `wrangler.toml` |
+> | **6.12** (Supabase config) | Consumer does NOT access Supabase | No impact — but if email status tracking is needed later, consumer would need DB access |
+> | **9.1** (Secrets) | Consumer needs `RESEND_API_KEY` | Must be set separately: `cd queue-worker && wrangler secret put RESEND_API_KEY` |
+> | **9.4** (CSP) | No impact | Queue is server-to-server, no browser CSP involvement |
+> | **11** (Deployment) | Two separate deployments | Main site AND consumer worker must be deployed when email logic changes |
+> | API route changes | Producer payloads | If booking/ARCO data shape changes, update `queue-types.ts` AND consumer |
+> | New API routes with emails | New producer | Add new message type to union, add consumer case, push from new route |
+
 ---
 
 ## 7. INTEGRATION PLAN — SERVICES TO ADD
 
-### Phase 1: Core (Current)
+### Phase 1: Core (Complete ✅)
 - [x] Astro + Cloudflare adapter
 - [x] D1 database + schema
 - [x] R2 bucket binding
@@ -533,11 +660,10 @@ The following frameworks have official or community Cloudflare deployment suppor
 - [x] PostHog reverse proxy
 - [x] Security headers
 
-### Phase 2: Enhanced Data Layer
-- [ ] **Supabase PostgreSQL** via Hyperdrive
-  - Create Hyperdrive config pointing to Supabase connection string
-  - Add `[[hyperdrive]]` binding to wrangler.toml
-  - Use `pg` driver with Hyperdrive for complex queries
+### Phase 2: Enhanced Data Layer (Complete ✅)
+- [x] **Supabase PostgreSQL** via Hyperdrive
+  - Hyperdrive connection pooling bound directly in `wrangler.toml` (Worker-mode support)
+  - Drizzle ORM + `pg` driver with Hyperdrive connection pooling
 - [ ] **Supabase Auth**
   - JWT validation in Workers (no Supabase SDK needed server-side)
   - Client-side `@supabase/supabase-js` for auth flows
@@ -545,15 +671,14 @@ The following frameworks have official or community Cloudflare deployment suppor
   - Policies on all user-facing tables
   - Admin role escalation via custom claims
 
-### Phase 3: Performance & Reliability
-- [ ] **Upstash Redis**
+### Phase 3: Performance & Reliability (Partially Complete)
+- [x] **Upstash Redis**
   - `@upstash/redis` REST client (works in Workers)
-  - Rate limiting middleware for API routes
-  - Booking form idempotency keys
-- [ ] **Cloudflare Queues**
-  - Async email delivery (decouple from request)
-  - Booking notification pipeline
-  - Analytics event batching
+  - Sliding window rate limiting on all 3 API routes (booking, ARCO, privacy)
+- [x] **Cloudflare Queues** ← See **Section 6.13** for full architecture
+  - `madagascar-emails` queue with sidecar consumer worker
+  - Async email delivery (booking confirmation + ARCO admin notification)
+  - 3 retries + dead-letter queue for failed messages
 - [ ] **Cloudflare Durable Objects**
   - Real-time booking availability (WebSocket)
   - Admin live dashboard (if needed)
@@ -580,8 +705,8 @@ Code must be self-documenting via clear naming. If logic is complex, create a si
 
 ### 8.2 Strict TypeScript
 - Use `interface` and `type` explicitly
-- `any` type is **FORBIDDEN**
-- All environment bindings typed in `env.d.ts`
+- `any` type is **FORBIDDEN** (unless bypassing an upstream type bug, thoroughly documented)
+- All environment bindings typed via `src/worker-configuration.d.ts` (generated by `wrangler types` / `npm run cf-typegen`)
 
 ### 8.3 File Naming
 All file names must be unique and descriptive across the project:
@@ -608,6 +733,7 @@ All file names must be unique and descriptive across the project:
 - Local dev secrets in `.dev.vars` (gitignored)
 - Production secrets via `wrangler secret put <KEY>`
 - Never commit secrets; `.dev.vars` is in `.gitignore`
+- Required secrets: `RESEND_API_KEY`, `ADMIN_EMAIL`, `SENDER_EMAIL`, `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`
 
 ### 9.2 Input Validation
 - All API endpoints validate with Zod schemas before processing
@@ -623,7 +749,7 @@ All file names must be unique and descriptive across the project:
 Defined in `public/_headers` for all origins:
 - `default-src 'self'`
 - `script-src 'self' 'unsafe-inline' *.posthog.com challenges.cloudflare.com`
-- `connect-src 'self' *.posthog.com *.ingest.us.sentry.io *.supabase.co`
+- `connect-src 'self' *.posthog.com *.ingest.us.sentry.io *.supabase.co api.resend.com`
 - `img-src 'self' blob: data: *.r2.dev`
 
 ### 9.5 Auth Architecture
@@ -669,18 +795,30 @@ astro dev                          # Starts with local D1/R2/KV bindings
 # Build
 astro build                        # Outputs to ./dist
 
-# Deploy
-astro build && wrangler pages deploy ./dist
+# Deploy (Main Astro Site)
+# Project uses standard workers pipeline, mapped natively with wrangler.toml
+astro build && wrangler deploy
+
+# Deploy (Email Queue Consumer Worker — separate deployment)
+cd queue-worker && npx wrangler deploy
 
 # D1 Migrations
 wrangler d1 execute madagascar-db --local --file=./db/migrations/XXXX.sql
 wrangler d1 execute madagascar-db --remote --file=./db/migrations/XXXX.sql
 ```
 
+> ⚠️ **Two deployments required:** The main Astro site and the `queue-worker` are deployed **independently**. If you change email templates or add new email types, you MUST also redeploy `queue-worker`. Use `npx wrangler tail cf-astro-email-consumer` to monitor queue processing in real-time.
+
 ### Environment
-- `wrangler.toml` — All bindings (D1, R2, KV, Hyperdrive, Queues)
-- `.dev.vars` — Local secrets (gitignored)
-- `wrangler secret put <KEY>` — Production secrets
+- `wrangler.toml` — All bindings (D1, R2, KV, Hyperdrive, Queues producer)
+- `queue-worker/wrangler.toml` — Consumer worker bindings (Queue consumer)
+- `.dev.vars` — Local secrets (gitignored): `RESEND_API_KEY`, `ADMIN_EMAIL`, `SENDER_EMAIL`, Supabase keys
+- `wrangler secret put <KEY>` — Production secrets (main project)
+- `cd queue-worker && wrangler secret put RESEND_API_KEY` — Consumer worker secrets
+
+### Dashboard Bindings (Cannot Be Set in wrangler.toml for Pages)
+- **Hyperdrive** — Must be bound via Cloudflare Dashboard → Pages → Settings → Bindings
+- **EMAIL_QUEUE** — Must be bound via Cloudflare Dashboard → Pages → Settings → Bindings → Queue
 
 ### Git Workflow
 - `main` branch = production
@@ -712,20 +850,41 @@ wrangler d1 execute madagascar-db --remote --file=./db/migrations/XXXX.sql
 
 When working on cf-astro, always use these resources BEFORE writing code:
 
-### 13.1 Free MCP Tools (Use Freely)
+### 13.1 Active & Available MCP Tools
 
-| Resource | Cost | When to Use |
+We have an extensive list of MCP tools available to assist with development. 
+> **⚠️ 100-Tool Limit constraint:** Due to a hard limit of 100 maximum tools per session, some of the MCPs listed below (or specific tools within them) might be temporarily disabled. If you need a specific MCP tool that is not currently visible, **ask the user to activate it** (they can easily switch another off to make room).
+
+| MCP Name | Cost | When to Use |
 |----------|------|-------------|
-| `@mcp:cloudflare-docs` | **FREE** | API signatures, binding types, configuration options |
-| `@mcp:cloudflare-bindings` | **FREE** | Runtime binding access patterns, env types |
-| `@[.agents/skills/astro/SKILL.md]` | **FREE** | Astro config, CLI commands, project structure |
-| `@[.agents/skills/cloudflare/SKILL.md]` | **FREE** | Cloudflare product selection, decision trees |
-| `@[nextjs-app/.agents/skills/brainstorming/SKILL.md]` | **FREE** | Design process (brainstorm → plan → build) |
-| Supabase MCP | **FREE** | Database schema, RLS policies, Auth setup |
-| Vercel MCP | **FREE** | Reference only (nextjs-app deployment context) |
-| Sentry MCP | **FREE** | Error tracking setup and monitoring |
+| `@mcp:tavily` | **FREE (Generous Tier)** | **[HIGH PRIORITY]** Web searches, deep research, and data extraction. Preferred over Perplexity for open-web deep dives. |
+| `@mcp:resend` | **FREE** | Managing, sending, and previewing transactional emails/broadcasts directly during development. |
+| `@mcp:cloudflare-docs` | **FREE** | API signatures, platform limits, Cloudflare product features. |
+| `@mcp:cloudflare-bindings` | **FREE** | Runtime binding access patterns, env types for Workers/Pages. |
+| `@mcp:posthog` | **FREE** | Querying PostHog analytics, exploring events/funnels, or consulting docs via context. |
+| `@mcp:sentry` | **FREE** | Error tracking setup, fetching context on recent errors. |
+| `@mcp:supabase-mcp-server` | **FREE** | Database schema, RLS policies, Auth setup, project config. |
+| `@mcp:upstash` | **FREE** | Redis database management, key inspection, rate-limit config, and cache operations. Use for setting up/debugging Upstash Redis instances, verifying stored keys, and managing TTLs. |
 
-### 13.2 ⚠️ Perplexity MCP — PAID SERVICE (Use Sparingly)
+*Upcoming Addition: We may soon add an MCP for **BetterStack** to manage centralized logging and uptime monitoring.*
+
+### 13.2 Core & Specialized Skills (Trigger Based on Requirements)
+
+Always refer to the appropriate skill guidelines to ensure high-quality and consistent implementations:
+
+| Skill Path | Purpose & When to Trigger |
+|------------|----------------------------|
+| `@[.agents/skills/astro/SKILL.md]` | Astro configuration, CLI commands, project structure, and adapters |
+| `@[.agents/skills/cloudflare/SKILL.md]` | Cloudflare product selection, D1/R2/KV integrations, pricing limits |
+| `@[.agents/skills/seo-geo/SKILL.md]` | SEO/GEO optimizations, schema markup, and AI engine indexing tasks |
+| `@[.agents/skills/colorize/SKILL.md]` | Making designs pop and vibrant; fixing dull interfaces, adding aesthetic warmth |
+| `@[.agents/skills/systematic-debugging/SKILL.md]` | First-response framework to ANY bugs, test failures, or unexpected behaviors |
+| `@[nextjs-app/.agents/skills/web-design-guidelines/SKILL.md]` | High-level visual identity (colors, typography) and premium feel requirements |
+| `@[nextjs-app/.agents/skills/frontend-design/SKILL.md]` | Structural frontend practices (mobile-first, accessibility, layout patterns) |
+| `@[admin-app/.agent/skills/security-best-practices/SKILL.md]` | Auth/Authz implementation, RLS, middleware, and secure data handling |
+| `@[nextjs-app/.agents/skills/brainstorming/SKILL.md]` | Design process (brainstorm → plan → build) |
+
+### 13.3 ⚠️ Perplexity MCP — PAID SERVICE (Use Sparingly)
 
 `@mcp:perplexity-ask` is a **PAID service** that costs real money per query. It must be used with extreme discipline:
 
@@ -734,11 +893,11 @@ When working on cf-astro, always use these resources BEFORE writing code:
 - Verifying **breaking changes** or deprecations in dependencies (Astro, Preact, Resend, etc.)
 - Investigating **complex architectural decisions** with no clear documentation
 - The user **explicitly requests** Perplexity research (e.g., "use Perplexity to find...")
-- Debugging an issue that **all other free MCP tools and web search have failed** to resolve
+- Debugging an issue that **all other free MCP tools (like Tavily) and web search have failed** to resolve
 
 #### ❌ FORBIDDEN — NEVER use Perplexity for:
-- Questions answerable by `@mcp:cloudflare-docs` (use that first, always)
-- Simple API syntax or configuration lookups (use docs or `search_web`)
+- Questions answerable by `@mcp:tavily` or `@mcp:cloudflare-docs` (use those first!)
+- Simple API syntax or configuration lookups (use docs or Tavily search)
 - General coding patterns (use pre-trained knowledge)
 - Anything documented in RULES.md, SKILL.md files, or project documentation
 - Routine development tasks (component building, CSS, TypeScript types)
@@ -746,10 +905,10 @@ When working on cf-astro, always use these resources BEFORE writing code:
 
 #### 🔄 Priority Order (Always follow this cascade):
 1. **RULES.md** — Check this file first
-2. **SKILL.md files** — Astro, Cloudflare skills (free)
+2. **SKILL.md files** — See Section 13.2 for the full list of specialized skills
 3. **`@mcp:cloudflare-docs`** — Official Cloudflare documentation (free)
 4. **`@mcp:cloudflare-bindings`** — Binding patterns and types (free)
-5. **`search_web`** — General web search (free)
+5. **`@mcp:tavily` / `search_web`** — General web search, generous tier (free)
 6. **Pre-trained knowledge** — For common patterns (free)
 7. **`@mcp:perplexity-ask`** — LAST RESORT only (💰 paid)
 
@@ -775,7 +934,7 @@ When working on cf-astro, always use these resources BEFORE writing code:
 | **Cloudflare DNS** | Domain resolution | Unlimited | **$0** |
 | **Cloudflare SSL** | HTTPS certificates | Universal SSL | **$0** |
 | **Cloudflare DDoS** | Attack protection | Enterprise-grade, unmetered | **$0** |
-| **Resend** | Transactional email | 3,000/month, 100/day | **$0** |
+| **Resend** | Transactional email (sole email provider) | 3,000/month, 100/day | **$0** |
 | **Supabase** | Auth + PostgreSQL + Storage | 500 MB DB, 1 GB storage, 50K MAUs | **$0** |
 | **Upstash** | Redis (rate limiting) | 10K commands/day, 256 MB | **$0** |
 | **PostHog** | Product analytics | 1M events/month | **$0** |
