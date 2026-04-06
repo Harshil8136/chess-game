@@ -1,612 +1,1038 @@
-# CF-ADMIN PROJECT — OPERATIONAL RULES & ARCHITECTURE BIBLE
+# CF-ADMIN — PRODUCTION ARCHITECTURE PLAN
 
-> **Last Updated:** 2026-04-03
-> **Research Sources:** Cloudflare Docs MCP, Supabase MCP, Cloudflare Bindings MCP, Tavily, Official Documentation
-
----
-
-## 🚨 RULE #0 — THE ABSOLUTE LAW (NEVER VIOLATE)
-
-**cf-admin is the Cloudflare-native version of admin-app. We can deeply review, understand how everything looks, works, and is designed in admin-app — however, WE NEVER, like NEVER, copy any single file or code from there.**
-
-This is the **STRICTEST** rule and MUST be followed at ALL times:
-
-- ✅ **ALLOWED:** Reference admin-app to understand features, flows, UX patterns, business logic concepts
-- ✅ **ALLOWED:** Use MCP tools (Cloudflare Docs, Supabase, Tavily) and SKILLs to find the best Cloudflare-native approach
-- ✅ **ALLOWED:** Build equivalent functionality from scratch using Cloudflare-optimized patterns
-- ❌ **FORBIDDEN:** Copy-pasting any file, component, function, hook, schema, or code block from admin-app
-- ❌ **FORBIDDEN:** Duplicating CSS, design tokens, or configuration verbatim from admin-app
-- ❌ **FORBIDDEN:** Using admin-app files as templates with "find and replace" modifications
-
-**Every line of code in cf-admin must be written fresh, optimized for the Cloudflare + Astro + Preact stack.**
+> **Version:** 3.0 (Validated & Lean Edition)  
+> **Last Updated:** 2026-04-05  
+> **Status:** APPROVED — Ready for Implementation  
+> **Research Sources:** Perplexity Deep Research, Cloudflare Docs MCP, Codebase Audit  
+> **Stack:** Astro 6 SSR + Cloudflare Workers (Free) + Preact Islands + D1 + KV + R2
 
 ---
 
-## 🏢 PROJECT MISSION — SECURE ADMIN PORTAL, $0 INFRASTRUCTURE
+## Table of Contents
 
-**cf-admin is a production-ready, commercial-grade administrative portal built entirely on FREE tier services.** This is a standard admin product — architected so any project with a main site can plug in a professional admin portal. Designed to:
-
-- ✅ Manage content, bookings, users, and site settings via secure dashboard
-- ✅ Enforce multi-level RBAC (DEV > SuperAdmin > Admin > Staff) on every route
-- ✅ Authenticate via Supabase GoTrue (Magic Link + Google/GitHub/Facebook OAuth)
-- ✅ Block ALL unauthorized access — signup disabled, whitelist-only entry
-- ✅ Refresh JWT tokens every 30 minutes, hard-expire sessions at 24 hours
-- ✅ Run 24/7 at **$0/month** total infrastructure cost
-- ✅ Deliver premium, animated, dark-themed admin experience
-- ✅ Meet professional security, accessibility, and performance standards
-
-**Every architectural decision optimizes for: maximum security + maximum quality + exactly ZERO ongoing cost.**
-
----
-
-## 1. PROJECT IDENTITY
-
-| Property | Value |
-|----------|-------|
-| **Name** | cf-admin (Madagascar Pet Hotel — Admin Portal) |
-| **Purpose** | Cloudflare-native admin portal equivalent to admin-app |
-| **Framework** | Astro 6.0+ with `@astrojs/cloudflare` adapter |
-| **Rendering** | Full SSR (`output: 'server'`) — every route requires auth |
-| **UI Islands** | Preact (3KB, React-compatible) for interactive components |
-| **Hosting** | Cloudflare Workers |
-| **Auth** | Supabase GoTrue (Magic Link + OAuth providers) |
-| **Database** | Supabase PostgreSQL (shared project `pklzjomfwqzricpsyrrc`) |
-| **Session Store** | Cloudflare KV (via Astro Sessions API) |
-| **Cache** | Upstash Redis (free tier — 10K commands/day) |
-| **Storage** | Cloudflare R2 (admin uploads — future phase) |
-| **CSS** | Tailwind CSS v4 via `@tailwindcss/vite` |
-| **Design System** | "Obsidian Clarity" V4 — dark-first with violet accents |
-| **Domain** | `secure.madagascarhotelags.com` (provisioned at v1.0) |
-| **GitHub** | `Harshil8136/cf-admin-madagascar` (private) |
-| **Worker Name** | `cf-admin-madagascar` (Harshil Cloudflare account) |
+1. [Executive Summary](#1-executive-summary)
+2. [Architecture Overview — The "Lean Edge" Philosophy](#2-architecture-overview)
+3. [PHASE 1 — RBAC + Declarative ACM (✅ IMPLEMENTED)](#3-phase-1--rbac--declarative-acm)
+4. [PHASE 2 — Page-Level Access Control (PLAC) System (🔥 NEW)](#4-phase-2--page-level-access-control-plac)
+5. [PHASE 3 — Astro View Transitions (SPA-Feel Navigation)](#5-phase-3--astro-view-transitions)
+6. [PHASE 4 — Ghost Audit Engine (ctx.waitUntil Logging)](#6-phase-4--ghost-audit-engine)
+7. [PHASE 5 — HTTP Caching & ETag Strategy](#7-phase-5--http-caching--etag-strategy)
+8. [PHASE 6 — Preact Signals (Inter-Island Reactivity)](#8-phase-6--preact-signals)
+9. [SCALE-UP VAULT — Enterprise Features (Deferred)](#9-scale-up-vault)
+10. [Risk Analysis & CPU Budget](#10-risk-analysis--cpu-budget)
+11. [File Map & Implementation Order](#11-file-map--implementation-order)
 
 ---
 
-## 2. RELATIONSHIP TO OTHER PROJECTS
+## 1. EXECUTIVE SUMMARY
 
-| Project | Role | Relationship |
-|---------|------|-------------|
-| **cf-astro** | Main customer-facing website | Shares Supabase project, D1 database, Hyperdrive binding |
-| **admin-app** | Legacy admin portal (Next.js) | Reference for UX/features only — **NEVER copy code** |
-| **nextjs-app** | Legacy main site (Next.js) | Reference only — no code sharing |
+This plan defines the **production architecture** for cf-admin — a secure, lightning-fast admin portal running on Cloudflare's $0 free tier. It was validated through deep research (Perplexity, Cloudflare Docs, industry analysis) against the original "Lego MFE" proposal.
 
-### Shared Resources
-- **Supabase Project:** `pklzjomfwqzricpsyrrc` (same PostgreSQL instance)
-- **D1 Database:** `madagascar-db` (ID: `67472110-4e86-44ad-942c-cdce861cb224`)
-- **Hyperdrive:** ID `34e77b687f2740f4b86636bad393b950`
-- **Cloudflare Account:** Harshil
+### Design Philosophy: "Lean Edge"
 
-### Isolation Rules
-- Admin tables use `admin_` prefix to avoid collision with cf-astro tables
-- cf-admin has its own KV namespace for sessions (separate from cf-astro SESSION KV)
-- cf-admin has its own Worker deployment (not shared with cf-astro)
-- Each project has its own `wrangler.toml`, `.dev.vars`, and deployment pipeline
+> **Build the simplest architecture that is genuinely production-grade. Defer enterprise complexity until scale demands it. Every millisecond of CPU and every kilobyte of JavaScript must justify its existence.**
 
----
+### What We Build NOW (6-10 pages, <10 users)
 
-## 3. RBAC — ROLE-BASED ACCESS CONTROL
+| Component | Approach | CPU Cost | JS Bundle |
+|-----------|----------|----------|-----------|
+| RBAC + ACM | ✅ Already implemented — hierarchical integers + route registry | <0.1ms | 0 KB |
+| **Page-Level Access (PLAC)** | **KV-cached access maps + D1 overrides + Auto-reset on role change** | **<0.5ms** | **~3 KB** |
+| **Feature-Sliced Modules** | **Domain-grouped module silos (15 modules, 30 pages)** | **0ms (build-time)** | **0 KB** |
+| SPA Navigation | Astro View Transitions API | 0ms (browser-native) | 0 KB |
+| Audit Logging | ctx.waitUntil() fire-and-forget D1 writes | 0ms (post-response) | 0 KB |
+| API Caching | HTTP ETag + Cache-Control headers | 0ms | 0 KB |
+| Island Communication | Preact Signals | 0ms | ~1 KB |
 
-### Role Hierarchy (lower number = higher privilege)
+### What We Defer (Scale-Up Vault — when 100+ users)
 
-| Role | Level | Badge Color | Hex | Permissions |
-|------|-------|-------------|-----|-------------|
-| **DEV** | 0 | Red | `#ef4444` | Full system access + dev tools + DB admin + user management |
-| **SuperAdmin** | 1 | Gold | `#d4a017` | Full access + user management + settings |
-| **Admin** | 2 | Purple | `#8b5cf6` | Content management + bookings + reports |
-| **Staff** | 3 | Blue | `#3b82f6` | Read bookings + basic operations |
-
-### Authorization Model
-1. **Supabase signup is DISABLED** in dashboard settings
-2. Only users listed in `admin_authorized_users` table can access the portal
-3. SuperAdmin/DEV adds users to the whitelist with assigned roles
-4. GoTrue issues JWTs for valid auth attempts; application layer checks whitelist
-5. Hardcoded super admin emails serve as ultimate failsafe
-
-### Session Security
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| JWT Refresh | Every 30 minutes | `SESSION_REFRESH_INTERVAL_MS=1800000` |
-| Max Session | 24 hours | `SESSION_MAX_LIFETIME_MS=86400000` |
-| Storage | Cloudflare KV (Astro Sessions) | Edge-local, fast reads |
-| SignOut | Destroys KV entry | No lingering tokens |
+| Component | Why Deferred |
+|-----------|-------------|
+| Bitmask entitlements | Hierarchical RBAC + PLAC covers all needs at current scale |
+| IndexedDB + Web Crypto vault | HTTP caching achieves "zero-invocation" without client JS |
+| Custom fragment orchestration | View Transitions handles this natively |
+| Global event bus | Preact Signals is simpler and type-safe |
+| Full MFE registry + dynamic loader | Astro's build-time code splitting already handles this |
 
 ---
 
-## 4. CLOUDFLARE FREE TIER — EXACT LIMITS & QUOTAS
+## 2. ARCHITECTURE OVERVIEW
 
-> Identical to cf-astro. All data verified against official Cloudflare documentation (March 2026).
-
-### 4.1 Workers (Compute)
-
-| Metric | Free Limit |
-|--------|-----------|
-| Requests | **100,000/day** |
-| CPU time per request | **10 ms** |
-| Memory | 128 MB |
-| Subrequests per request | 50 |
-| Worker script size | 3 MB |
-| Number of Workers | 100 per account |
-
-### 4.2 KV (Sessions)
-
-| Metric | Free Limit |
-|--------|-----------|
-| Keys read | **100,000/day** |
-| Keys written | **1,000/day** |
-| Storage per account | **1 GB** |
-
-### 4.3 D1 Database (SQLite)
-
-| Metric | Free Limit |
-|--------|-----------|
-| Rows read | **5 million/day** |
-| Rows written | **100,000/day** |
-| Storage | **5 GB** |
-
-### 4.4 R2 Object Storage
-
-| Metric | Free Limit |
-|--------|-----------|
-| Storage | **10 GB/month** |
-| Reads | **10 million/month** |
-| Writes | **1 million/month** |
-| Egress | **FREE (always $0)** |
-
----
-
-## 5. SUPABASE FREE TIER
-
-| Metric | Free Limit |
-|--------|-----------|
-| Projects | **2 active** (cf-astro + cf-admin share 1 project) |
-| PostgreSQL size | **500 MB** |
-| Auth MAUs | **50,000** |
-| File storage | **1 GB** |
-| Edge Functions | **500,000/month** |
-| RLS policies | **Unlimited** |
-
----
-
-## 6. UPSTASH FREE TIER
-
-| Metric | Free Limit |
-|--------|-----------|
-| Commands per day | **10,000** |
-| Max data size | **256 MB** |
-| Concurrent connections | 10 |
-| Databases | 1 |
-
----
-
-## 7. TECHNOLOGY STACK
-
-### 7.1 Framework: Astro 6.0+ (Full SSR for Admin)
-
-- `output: 'server'` — ALL routes are server-rendered (auth check required)
-- Cloudflare adapter with native binding access
-- Astro Sessions API backed by Cloudflare KV for session persistence
-- No static pages — admin portal has zero public content
-
-### 7.2 UI: Preact Islands
-
-- 3KB gzipped vs 45KB+ for React runtime
-- Full React API compatibility via `preact/compat`
-- Use `client:load` for auth-critical UI (login form)
-- Use `client:idle` for dashboard widgets
-
-### 7.3 CSS: Tailwind CSS v4
-
-- Runs via `@tailwindcss/vite` as a Vite plugin
-- Uses `@theme` in `src/styles/global.css` for design tokens
-- Dark-first "Obsidian Clarity" V4 palette with violet accent (`#8b5cf6`)
-
-### 7.4 Auth: Supabase GoTrue
-
-- Client-side: `@supabase/supabase-js` for login flows
-- Server-side: service_role client for whitelist verification
-- Providers: Magic Link, Google, GitHub, Facebook
-- JWT refresh every 30 min, hard session expiry at 24 hours
-
-### 7.5 Database Access
-
-- Supabase PostgreSQL via Hyperdrive (connection pooling)
-- Admin tables: `admin_authorized_users`, `admin_sessions`
-- All tables have RLS enabled — service_role only
-- D1 for non-PII operational data (future)
-
-### 7.6 Environment Variables
+### The 4-Layer "Lean Edge" Stack
 
 ```
-# .dev.vars (local — gitignored)
-PUBLIC_SUPABASE_URL=https://pklzjomfwqzricpsyrrc.supabase.co
-PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-UPSTASH_REDIS_REST_URL=...
-UPSTASH_REDIS_REST_TOKEN=...
-TURNSTILE_SECRET_KEY=...
-SITE_URL=https://secure.madagascarhotelags.com
+┌─────────────────────────────────────────────────────────────────┐
+│                    LAYER 4: OBSERVER                            │
+│  Ghost Audit Engine (ctx.waitUntil → D1 admin_audit_log)        │
+│  Post-response, zero-latency, fire-and-forget                   │
+├─────────────────────────────────────────────────────────────────┤
+│                    LAYER 3: CACHE                               │
+│  HTTP ETag + Cache-Control headers on API responses             │
+│  KV hot cache for PLAC access maps + expensive queries          │
+├─────────────────────────────────────────────────────────────────┤
+│                    LAYER 2: ACCESS CONTROL                      │
+│  Hierarchical RBAC (rbac.ts) + Route ACM (registry.ts)          │
+│  + Page-Level Access Control (PLAC) with KV-cached overrides    │
+├─────────────────────────────────────────────────────────────────┤
+│                    LAYER 1: TRANSPORT                           │
+│  Astro 6 SSR + View Transitions + Preact Islands + Signals      │
+│  Cloudflare Workers → D1 / KV / R2 / Hyperdrive                │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-Secrets in production: `wrangler secret put <KEY>`
-
----
-
-## 8. CODE QUALITY RULES
-
-### 8.1 TypeScript Strictness
-- `moduleResolution: "bundler"` in tsconfig.json
-- `any` type is **FORBIDDEN** (unless bypassing upstream type bug, documented)
-- All Cloudflare bindings typed
-
-### 8.2 File Naming
-All file names must be unique and descriptive:
-- ✅ `LoginForm.tsx`, `AuthLayout.astro`, `rbac.ts`
-- ❌ `Form.tsx` (ambiguous), `index.tsx` (without context)
-
-### 8.3 Component Architecture
-- **Astro components** (`.astro`) for layout and static structure
-- **Preact islands** (`.tsx`) only for interactive UI
-- Use `client:load` for above-fold critical interactivity
-- Use `client:idle` for below-fold widgets
-
-### 8.4 Error Handling
-- Never show white screens — use ErrorBoundary component
-- Section-level boundaries: one broken widget never crashes the page
-- API routes return structured JSON errors with proper HTTP status codes
-- Users always have navigation to recover
-
-### 8.5 Animation Standards
-- All interactive elements must have smooth transitions
-- Use `var(--duration-normal)` (200ms) for hover/focus states
-- Use `var(--duration-slow)` (350ms) for page transitions
-- Respect `prefers-reduced-motion` media query
-
----
-
-## 9. SECURITY RULES
-
-### 9.1 Secrets Management
-- Local dev secrets in `.dev.vars` (gitignored)
-- Production secrets via `wrangler secret put <KEY>`
-- Never commit secrets; `.dev.vars` is in `.gitignore`
-
-### 9.2 Auth Architecture
-- Signup is **DISABLED** in Supabase dashboard
-- Only `admin_authorized_users` whitelist members can authenticate
-- Server-side whitelist check on every auth callback
-- JWT validation + refresh via Supabase client
-- Sessions stored in KV with 24-hour hard expiry
-
-### 9.3 Route Protection
-- Astro middleware checks session on EVERY non-public route
-- Public routes: `/` (login), `/auth/callback`
-- Everything else requires valid session + role check
-- Failed auth → redirect to login with error message
-
-### 9.4 Input Validation
-- All form inputs validated server-side before processing
-- Parameterized queries only — never string concatenation
-- Turnstile protection on login form (magic link)
-
-### 9.5 Content Security Policy
-Defined in `public/_headers`:
-- `X-Frame-Options: DENY`
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy: strict-origin-when-cross-origin`
-
----
-
-## 10. DESIGN SYSTEM — "OBSIDIAN COMMAND"
-
-### Color Palette
-
-| Token | Dark Value | Purpose |
-|-------|-----------|---------|
-| `surface-base` | `#060a0e` | Page background |
-| `surface-raised` | `#0c1117` | Card/panel background |
-| `surface-overlay` | `#131a22` | Modal/dropdown background |
-| `surface-glass` | `rgba(12,17,23,0.72)` | Glassmorphism panels |
-| `accent` | `#00d4ff` | Primary interactive color |
-| `text-primary` | `#f0f4f8` | Headings, important text |
-| `text-secondary` | `#8b9ab5` | Body text, labels |
-| `text-tertiary` | `#5a6b83` | Hints, captions |
-
-### Typography
-- Primary: `Inter` (Google Fonts) — 400, 500, 600, 700, 800
-- Mono: `JetBrains Mono` — code blocks, technical data
-
-### Motion
-- Fast: 120ms (micro-interactions)
-- Normal: 200ms (hover, focus)
-- Slow: 350ms (page transitions)
-- Spring: `cubic-bezier(0.34, 1.56, 0.64, 1)` (bouncy elements)
-
-### 10.1 Login Portal — V4 "Obsidian Clarity" Design Specification
-
-The login page uses a **single-column, centered card** layout inspired by Clerk/Vercel auth flows. No split-screen, no sidebar — just a pristine glassmorphic card on a warm dark canvas.
-
-#### Background & Ambient System
-
-| Element | Spec |
-|---------|------|
-| **Base** | `#09090b` (zinc-950) — set via inline `style` on `<body>`, not Tailwind class |
-| **Orb 1 (Violet)** | `radial-gradient` of `rgba(139,92,246,0.6)` → `rgba(99,102,241,0.2)`, `opacity-[0.12]`, `blur(90px)`, top-left bias |
-| **Orb 2 (Rose)** | `radial-gradient` of `rgba(244,63,94,0.5)` → `rgba(236,72,153,0.15)`, `opacity-[0.08]`, `blur(80px)`, right-center |
-| **Orb 3 (Cyan)** | `radial-gradient` of `rgba(6,182,212,0.4)` → `rgba(99,102,241,0.15)`, `opacity-[0.06]`, `blur(100px)`, bottom-center |
-| **Orb Animation** | Slow `translate()` drift at 25s/30s/35s cycles per orb. Defined in `<style>` block in `AuthLayout.astro` |
-| **Noise Texture** | SVG `feTurbulence` overlay at `opacity-[0.015]` for grain |
-
-All orbs are `position: absolute` inside a `fixed inset-0 pointer-events-none z-0` container.
-
-#### Glassmorphic Card
+### Request Lifecycle (Every Request)
 
 ```
-background:  rgba(255,255,255,0.035)
-border:      1px solid rgba(255,255,255,0.08)   /* border-white/[0.08] */
-backdrop:    blur(40px)
-radius:      rounded-2xl (1rem)
-padding:     p-10 sm:p-12
-max-width:   max-w-[440px]
-box-shadow:  0 0 0 1px rgba(139,92,246,0.06),   /* violet inner ring */
-             0 20px 50px rgba(0,0,0,0.5),        /* depth shadow */
-             0 0 80px rgba(139,92,246,0.06),      /* violet ambient glow */
-             0 0 120px rgba(99,102,241,0.03)      /* indigo far glow */
-```
-
-Card mounts with a CSS transition: `opacity 0→1`, `translateY(12px)→0`, `scale(0.98→1)` over 500ms.
-
-#### Color Accent System
-
-Primary accent: **Violet** (`#8b5cf6` / `rgba(139,92,246,*)`) — used consistently across all interactive elements:
-
-| Element | Idle State | Active/Hover State |
-|---------|-----------|-------------------|
-| **Shield/Mail Icon BG** | `rgba(139,92,246,0.08)` bg + `rgba(139,92,246,0.15)` border | — |
-| **Social Buttons** | `border-white/[0.08]` + `bg-white/[0.04]` | `hover:bg-violet-500/[0.06]` + `hover:border-violet-400/[0.2]` |
-| **Input Focus Ring** | `border-white/[0.1]` | `border: rgba(139,92,246,0.4)` + `box-shadow: 0 0 0 3px rgba(139,92,246,0.1)` |
-| **CTA Button (empty)** | `rgba(139,92,246,0.08)` bg + `rgba(139,92,246,0.12)` border | — |
-| **CTA Button (filled)** | `linear-gradient(135deg, #fff, #f0e6ff)` | `box-shadow: 0 0 25px rgba(139,92,246,0.15)` |
-| **Divider Lines** | Gradient: `transparent → rgba(139,92,246,0.15) → rgba(255,255,255,0.06)` | — |
-
-#### Component Layout (top → bottom)
-
-1. **Shield Icon** — `w-12 h-12 rounded-xl`, violet-tinted bg
-2. **Heading** — `text-[22px] font-bold text-white tracking-tight`
-3. **Subtext** — `text-[13px] text-white/45 font-medium`
-4. **Social Buttons** — Full-width stacked (Google first, then GitHub), `py-3 rounded-xl`, `gap-3`
-5. **Divider** — Gradient lines with `OR` label (`text-[11px] text-white/30 uppercase tracking-widest`)
-6. **Email Input** — `px-4 py-3 rounded-xl`, `bg-rgba(255,255,255,0.03)`, violet focus ring
-7. **CTA Button** — `py-3 rounded-xl font-semibold`, disabled=transparent violet / enabled=white-to-lavender gradient w/ glow
-
-#### Auth Providers (Supabase GoTrue via `@supabase/ssr`)
-
-| Provider | Method | Notes |
-|----------|--------|-------|
-| **Google** | `signInWithOAuth` + PKCE | Redirects to `/auth/callback` |
-| **GitHub** | `signInWithOAuth` + PKCE | Redirects to `/auth/callback` |
-| **Magic Link** | `signInWithOtp` | Shows "Check your email" confirmation card |
-
-No password auth. No Facebook (removed). No signup.
-
-#### Typography
-
-```
-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif
-font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'  /* stylistic alternates for crisp rendering */
-weights: 400 (body), 500 (labels), 600 (subheadings), 700 (headings/CTA)
-```
-
-Loaded via Google Fonts with `opsz` (optical sizing) axis: `Inter:opsz,wght@14..32,400..700`.
-
-#### CSS Architecture — Critical Rules
-
-1. **Global CSS** lives in `src/styles/global.css` — imported by `AuthLayout.astro`
-2. **Tailwind v4** uses `@theme` block for design tokens and `@source` directives for component scanning
-3. **⚠️ CRITICAL:** ALL base resets/styles MUST be inside `@layer base { }`. Unlayered CSS overrides Tailwind utilities and causes layout collapse (padding, margin, flex all break). This was the root cause of the original "squishy card" bug
-4. **Animation keyframes** (`authFadeIn`, `orbDrift1-3`) are scoped inside `AuthLayout.astro`'s `<style>` block, NOT in global.css
-5. **IDE lint warnings** for `@source`, `@theme` are false positives — Tailwind v4 syntax not yet recognized by CSS linters
-
-#### File Map
-
-| File | Purpose |
-|------|---------|
-| `src/layouts/AuthLayout.astro` | HTML shell, ambient orbs, noise texture, footer |
-| `src/components/auth/LoginForm.tsx` | Preact island — full login UI + auth logic |
-| `src/styles/global.css` | Tailwind v4 config, design tokens, dashboard CSS |
-| `src/pages/index.astro` | Entry point — renders `<AuthLayout>` + `<LoginForm>` |
-| `src/pages/auth/callback.astro` | OAuth redirect handler |
-
----
-
-### 10.2 Dashboard & Navigation — V4 "Obsidian Clarity" Design Specification
-
-The dashboard, sidebar, and topbar share the same V4 design tokens as the login portal but with adjusted intensities for daily-use comfort.
-
-#### Accent Migration: Cyan → Violet
-
-The entire design system was migrated from **Cyan** (`#00d4ff`) to **Violet** (`#8b5cf6`) as the primary accent. Cyan is retained as a secondary for health indicators only.
-
-| Token | Old Value (Cyan) | New Value (Violet) |
-|-------|-----------------|-------------------|
-| `--color-accent` | `#00d4ff` | `#8b5cf6` |
-| `--color-accent-hover` | `#33ddff` | `#a78bfa` |
-| `--color-accent-muted` | `rgba(0,212,255,0.12)` | `rgba(139,92,246,0.12)` |
-| `--color-border-accent` | `rgba(0,212,255,0.3)` | `rgba(139,92,246,0.3)` |
-
-#### Ambient Background (Dashboard)
-
-Same 3-orb system as login but at **50% opacity** to avoid distraction during extended use:
-
-| Orb | Login Opacity | Dashboard Opacity |
-|-----|--------------|------------------|
-| Violet (top-left) | `0.12` | `0.06` |
-| Rose (right) | `0.08` | `0.04` |
-| Cyan (bottom) | `0.06` | `0.03` |
-
-Defined in `AdminLayout.astro`'s `<style>` block using the same `orbDrift1-3` keyframes.
-
-#### Glassmorphism System
-
-New CSS tokens added to `@theme` for reusable glass patterns:
-
-```
---color-glass:        rgba(255, 255, 255, 0.035)
---color-glass-border: rgba(255, 255, 255, 0.08)
---color-glass-hover:  rgba(255, 255, 255, 0.06)
-```
-
-Used by: `.stat-card`, `.health-bar`, `.quick-action-card`, `.dashboard-panel`
-
-#### Sidebar
-
-- **Background:** Glassmorphic with `@supports` fallback — uses `backdrop-filter: blur(20px)` if supported, falls back to solid `surface-raised`
-- **Logo icon:** Violet stroke `#8b5cf6` with `rgba(139,92,246,0.08)` bg
-- **Active item:** Violet bg `rgba(139,92,246,0.12)` + 3px violet accent bar
-- **Hover:** `rgba(139,92,246,0.06)` background tint
-- **Border:** `1px solid rgba(139,92,246,0.06)` instead of generic border-subtle
-
-#### TopBar
-
-- **Glass:** `rgba(6,10,14,0.75)` bg with `blur(24px) saturate(1.5)`
-- **Border:** `rgba(139,92,246,0.06)` bottom border for violet warmth
-- **Avatar:** Violet/indigo gradient `linear-gradient(135deg, rgba(139,92,246,0.2), rgba(99,102,241,0.15))`
-- **Dropdown:** Glassmorphic with `rgba(19,26,34,0.95)` bg + blur + violet ambient shadow + `revealDown` animation
-
-#### Dashboard Widgets
-
-| Widget | Key Treatment |
-|--------|---------------|
-| **StatCard** | Glass bg, violet hover glow (`0 12px 32px rgba(0,0,0,0.3), 0 0 30px rgba(139,92,246,0.06)`), `translateY(-3px)` lift, tabular nums |
-| **QuickActions** | Glass bg, violet icon containers (`rgba(139,92,246,0.08)`), violet arrow on hover |
-| **ActivityFeed** | Violet avatar gradient, violet row hover tint (`rgba(139,92,246,0.03)`) |
-| **SystemHealthBar** | Glass bg, retained green/amber health dots |
-| **Greeting** | Gradient text on name: `linear-gradient(135deg, #f0f4f8, #a78bfa)` via `-webkit-background-clip: text` |
-
-#### File Map (Dashboard)
-
-| File | Purpose |
-|------|---------|
-| `src/layouts/AdminLayout.astro` | HTML shell, ambient orbs (50% opacity), noise texture |
-| `src/components/navigation/Sidebar.tsx` | Preact island — collapsible nav, violet accents |
-| `src/components/navigation/TopBar.tsx` | Preact island — glassmorphic header + user menu |
-| `src/components/dashboard/StatCard.tsx` | KPI card with glassmorphic hover glow |
-| `src/components/dashboard/ActivityFeed.tsx` | Recent admin sessions with violet avatars |
-| `src/components/dashboard/SystemHealthBar.tsx` | Infrastructure status indicators |
-| `src/components/dashboard/QuickActions.tsx` | RBAC-gated action shortcuts |
-| `src/pages/dashboard/index.astro` | Dashboard page — server-side data + Preact islands |
-
----
-
-## 11. DEPLOYMENT RULES
-
-### Build & Deploy
-```bash
-# Development
-astro dev                    # Local dev with .dev.vars
-
-# Type Check
-astro check                  # TypeScript validation
-
-# Build
-astro build                  # Production build to ./dist
-
-# Deploy
-astro build && wrangler deploy  # Build + deploy to Cloudflare
-```
-
-### Git Workflow
-- **Repository:** `https://github.com/Harshil8136/cf-admin-madagascar.git`
-- `main` branch = production
-- Feature branches for development
-- `astro check` + `astro build` must pass before merge
-
-### Environment
-- `wrangler.toml` — Cloudflare bindings (D1, KV, Hyperdrive)
-- `.dev.vars` — Local secrets (gitignored)
-- `wrangler secret put <KEY>` — Production secrets
-
----
-
-## 12. DOCUMENTATION ARCHITECTURE
-
-| File/Folder | Purpose |
-|-------------|---------|
-| `RULES.md` | This file — operational bible |
-| `ToDoAdmin.md` | Living progress tracker (what's done, what's next) |
-| `README.md` | Quick start guide for developers |
-| `documentation/` | Detailed technical documentation |
-| `.agents/context/` | AI agent reference files |
-
-### Documentation Folder Structure
-```
-documentation/
-├── 00-architecture.md       # System overview, tech stack, diagrams
-├── 01-setup-guide.md        # 5-step quickstart
-├── 02-environment-vars.md   # Every .dev.vars key documented
-├── 03-supabase-config.md    # Auth providers, RLS, table schemas
-├── 04-cloudflare-resources.md  # D1, KV, R2, Hyperdrive setup
-├── 05-rbac-system.md        # Role hierarchy, permission matrix
-├── 06-error-handling.md     # Error boundary architecture
-├── 07-deployment.md         # Build, deploy, DNS instructions
-└── 08-limitations.md        # Free tier limits & constraints
+Browser Request
+    │
+    ▼
+┌── MIDDLEWARE (middleware.ts) ──────────────────────────────┐
+│  1. Is route public? (/login, /auth/*) → PASS             │
+│  2. Get session from KV (cookie → session:uuid)            │
+│  3. Session expired? → Redirect to /                       │
+│  4. Need JWT refresh? (30min interval) → Refresh tokens    │
+│  5. Get PLAC access map from KV (plac:{userId})            │
+│  6. Check access: role hierarchy + page overrides           │
+│  7. Denied? → Redirect /dashboard?error=insufficient       │
+│  8. Inject user + permissions into Astro.locals             │
+└────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌── PAGE RENDER (Astro SSR) ────────────────────────────────┐
+│  Server-side data fetch (D1/Supabase via Hyperdrive)       │
+│  Render HTML + Preact island placeholders                  │
+│  Set ETag + Cache-Control headers                          │
+└────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌── POST-RESPONSE (ctx.waitUntil) ──────────────────────────┐
+│  Ghost Audit: log action to D1 admin_audit_log             │
+│  (Runs AFTER response is sent — zero user latency)         │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 13. MCP & SKILL USAGE GUIDE
+## 3. PHASE 1 — RBAC + DECLARATIVE ACM (✅ IMPLEMENTED)
 
-### 13.1 Active MCP Tools
+> **Status:** Already implemented and production-ready. No changes needed.
 
-| MCP Name | Cost | When to Use |
-|----------|------|-------------|
-| `@mcp:tavily` | **FREE** | Web searches, deep research, data extraction |
-| `@mcp:cloudflare-docs` | **FREE** | API signatures, platform limits |
-| `@mcp:cloudflare-bindings` | **FREE** | Runtime binding patterns |
-| `@mcp:supabase-mcp-server` | **FREE** | Database schema, RLS, Auth setup |
-| `@mcp:upstash` | **FREE** | Redis management, rate limiting |
-| `@mcp:sentry` | **FREE** | Error tracking setup |
-| `@mcp:posthog` | **FREE** | Analytics queries |
-| `@mcp:resend` | **FREE** | Email management |
+### 3.1 Current Implementation (Keep As-Is)
 
-### 13.2 Skills
+| File | Purpose | Status |
+|------|---------|--------|
+| `src/lib/auth/rbac.ts` | Role hierarchy (DEV:0 > SuperAdmin:1 > Admin:2 > Staff:3) | ✅ Complete |
+| `src/lib/auth/registry.ts` | Declarative route → minimum role mapping (ACM) | ✅ Complete |
+| `src/lib/auth/guard.ts` | Server-side auth gate with ACM + token refresh | ✅ Complete |
+| `src/lib/auth/session.ts` | KV-backed sessions with 30min refresh + 24h expiry | ✅ Complete |
+| `src/middleware.ts` | Global auth gate on every non-public route | ✅ Complete |
 
-| Skill | When to Use |
-|-------|-------------|
-| `astro/SKILL.md` | Astro CLI, project structure, adapters |
-| `cloudflare/SKILL.md` | Cloudflare product selection, limits |
-| `tailwind-design-system/SKILL.md` | Tailwind v4 @theme, component patterns |
-| `systematic-debugging/SKILL.md` | First response to ANY bugs |
-| `brainstorming/SKILL.md` | Design process (brainstorm → plan → build) |
+### 3.2 Why This Is Already Optimal
 
-### 13.3 Perplexity MCP — PAID SERVICE
+The `hasPermission()` function uses a simple integer comparison:
 
-`@mcp:perplexity-ask` costs real money. Use ONLY as last resort after exhausting all free tools.
+```typescript
+// rbac.ts — O(1), <0.01ms, zero allocations
+export function hasPermission(userRole: Role, requiredRole: Role): boolean {
+  return ROLE_LEVEL[userRole] <= ROLE_LEVEL[requiredRole];
+}
+```
 
-**Priority Order:**
-1. RULES.md → 2. SKILL.md files → 3. `@mcp:cloudflare-docs` → 4. `@mcp:tavily` → 5. Pre-trained knowledge → 6. `@mcp:perplexity-ask` (💰 LAST)
+**Research confirmed:** At 4 roles and ~10 routes, this integer hierarchy is identical in security to bitmask systems but with zero debugging complexity. Bitwise operations save ~0.9μs per check — irrelevant when D1 queries take 5-8ms.
 
----
+### 3.3 Current Route Registry
 
-## 14. TOTAL MONTHLY COST — $0
+```typescript
+// registry.ts — Declarative ACM (longest-prefix matching)
+export const ROUTE_REGISTRY: Record<string, RouteDefinition> = {
+  '/dashboard/users':    { minRole: ROLES.SUPER_ADMIN },
+  '/dashboard/settings': { minRole: ROLES.SUPER_ADMIN },
+  '/dashboard/content':  { minRole: ROLES.ADMIN },
+  '/dashboard':          { minRole: ROLES.STAFF },
+};
+```
 
-| Service | What We Use | Monthly Cost |
-|---------|------------|-------------|
-| Cloudflare Workers | Hosting + SSR | **$0** |
-| Cloudflare KV | Session storage | **$0** |
-| Cloudflare D1 | Operational data | **$0** |
-| Cloudflare Hyperdrive | DB connection pooling | **$0** |
-| Supabase | Auth + PostgreSQL (shared) | **$0** |
-| Upstash | Redis (rate limiting) | **$0** |
-| GitHub | Source control | **$0** |
-| | **TOTAL** | **$0.00** |
-
-### Only Paid Service
-
-| Service | Cost | Note |
-|---------|------|------|
-| Domain name | ~$10-15/year | One-time, shared with cf-astro |
-| Perplexity MCP | Per-query | Minimize usage |
+This registry defines the **default baseline** for role-based access. PLAC (Phase 2) adds per-user overrides on top of this foundation.
 
 ---
 
-*End of Rules. These constraints must be acknowledged and followed for every task in cf-admin.*
+## 4. PHASE 2 — PAGE-LEVEL ACCESS CONTROL (PLAC) SYSTEM (🔥 NEW)
+
+> **Priority:** HIGH — This is the primary new feature.  
+> **Research:** Validated via Perplexity against Clerk, WorkOS, and Oso patterns (2026).
+
+### 4.1 What PLAC Does
+
+PLAC enables **per-user, full-page access overrides** on top of hierarchical RBAC:
+
+- A **DEV** can grant a Staff member access to `/dashboard/content` (normally Admin-only)
+- A **SuperAdmin** can revoke an Admin's access to `/dashboard/settings`
+- A **SuperAdmin** CANNOT grant access to pages they don't have access to
+- A **SuperAdmin** CANNOT modify a DEV's access (hierarchy enforcement)
+- **Deny always wins** — if an explicit deny override exists, role-based access is ignored
+- All overrides are **auditable** — who granted/revoked, when, and for whom
+
+### 4.2 Design Principles
+
+| Principle | Implementation |
+|-----------|---------------|
+| **Lightning fast** | KV-cached access maps — zero D1 queries per request |
+| **Deny wins** | Explicit deny override trumps both role default and grant override |
+| **Hierarchy-enforced** | API validates actor rank > target rank before any mutation |
+| **Cannot grant upward** | Actor cannot grant access to pages they don't have access to |
+| **Audit trail** | Every grant/revoke writes to `admin_audit_log` via ctx.waitUntil |
+| **Cache invalidation** | Provisioning immediately deletes target user's KV cache |
+
+### 4.3 Database Schema (D1)
+
+```sql
+-- ═══════════════════════════════════════════════════════════════
+-- PLAC: Page-Level Access Control Tables
+-- ═══════════════════════════════════════════════════════════════
+
+-- Table 1: Page Registry (pre-populated with all dashboard pages)
+-- This is the single source of truth for what pages exist and
+-- their default minimum role requirement.
+CREATE TABLE IF NOT EXISTS admin_pages (
+  path TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  icon TEXT NOT NULL DEFAULT 'file',
+  required_role TEXT NOT NULL CHECK (
+    required_role IN ('dev', 'super_admin', 'admin', 'staff')
+  ),
+  description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1
+);
+
+-- Table 2: Per-User Page Access Overrides (junction table)
+-- Normalized — NOT a JSON array in the user row.
+-- Research confirmed: junction table enables indexed O(1) lookups,
+-- hierarchy enforcement via granted_by, and clean provisioning queries.
+CREATE TABLE IF NOT EXISTS admin_page_overrides (
+  user_id TEXT NOT NULL,
+  page_path TEXT NOT NULL,
+  granted INTEGER NOT NULL CHECK (granted IN (0, 1)),
+  granted_by TEXT NOT NULL,
+  granted_by_email TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, page_path)
+);
+
+-- Index for fast lookups by user (middleware cache rebuild)
+CREATE INDEX IF NOT EXISTS idx_overrides_user 
+  ON admin_page_overrides (user_id);
+
+-- Index for fast lookups by grantor (audit: "what did this admin provision?")
+CREATE INDEX IF NOT EXISTS idx_overrides_grantor 
+  ON admin_page_overrides (granted_by);
+```
+
+**Seed data for admin_pages:**
+
+```sql
+INSERT OR IGNORE INTO admin_pages (path, label, icon, required_role, description, sort_order) VALUES
+  -- ═══ CORE ═══
+  ('/dashboard',              'Dashboard',         'layout-dashboard', 'staff',       'Home dashboard with KPIs and activity feed',        0),
+  ('/dashboard/bookings',     'Bookings',          'calendar',         'staff',       'View and manage pet boarding reservations',          1),
+  ('/dashboard/customers',    'Customers',         'contact',          'staff',       'Customer profiles and contact information',          2),
+  ('/dashboard/pets',         'Pet Profiles',      'paw-print',        'staff',       'Pet records, breeds, medical notes',                 3),
+  -- ═══ CONTENT MANAGEMENT ═══
+  ('/dashboard/content',      'Content Studio',    'palette',          'admin',       'CMS hub for managing public site content',           4),
+  ('/dashboard/content/hero', 'Hero Editor',       'image',            'admin',       'Hero background and headline management',            5),
+  ('/dashboard/content/gallery','Gallery Manager', 'images',           'admin',       'Photo gallery drag-and-drop manager',                6),
+  ('/dashboard/content/services','Services Editor','list-checks',      'admin',       'Service offerings and descriptions',                 7),
+  ('/dashboard/content/pricing','Pricing Editor',  'badge-dollar-sign','admin',       'Pricing tables and package configuration',            8),
+  ('/dashboard/content/testimonials','Testimonials','message-square',  'admin',       'Customer testimonials and reviews',                   9),
+  ('/dashboard/content/faq',  'FAQ Editor',        'help-circle',      'admin',       'Frequently asked questions management',               10),
+  ('/dashboard/content/about','About Page',        'info',             'admin',       'About page content and team information',             11),
+  -- ═══ ANALYTICS & REPORTS ═══
+  ('/dashboard/analytics',    'Analytics',         'bar-chart-3',      'admin',       'Traffic, engagement, and usage analytics',            12),
+  ('/dashboard/reports',      'Reports',           'file-bar-chart',   'super_admin', 'Financial and operational reports',                   13),
+  -- ═══ OPERATIONS ═══
+  ('/dashboard/logs',         'Activity Logs',     'scroll-text',      'staff',       'Admin action audit trail and system logs',            14),
+  -- ═══ ADMINISTRATION ═══
+  ('/dashboard/users',        'User Management',   'users',            'super_admin', 'Admin user accounts, roles, and page access',        15),
+  ('/dashboard/settings',     'Site Settings',     'settings',         'super_admin', 'General portal and site configuration',               16),
+  ('/dashboard/settings/email','Email Templates',  'mail',             'super_admin', 'Email notification template management',              17),
+  ('/dashboard/settings/integrations','Integrations','plug',           'super_admin', 'Third-party service connections',                     18),
+  -- ═══ DEV TOOLS ═══
+  ('/dashboard/debug',        'Debug Tools',       'bug',              'dev',         'Developer diagnostics, cache inspection, D1 viewer',  19);
+```
+
+### 4.4 Resolution Algorithm (The "Merge" Logic)
+
+The access map is **precomputed at login and on provisioning changes**, then cached in KV. The middleware only reads from KV — zero D1 queries per request.
+
+```
+RESOLUTION RULE (per page, per user):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Check explicit override for this user + page:
+   → If override exists AND granted = 0 (DENY):  ACCESS = FALSE  (deny ALWAYS wins)
+   → If override exists AND granted = 1 (GRANT):  ACCESS = TRUE
+
+2. If no override exists, fall back to role hierarchy:
+   → ROLE_LEVEL[user.role] <= ROLE_LEVEL[page.required_role]
+   → DEV(0) can access everything
+   → Staff(3) can only access Staff-level pages
+
+RESULT: A flat Record<string, boolean> object cached in KV as plac:{userId}
+```
+
+**TypeScript implementation:**
+
+```typescript
+// src/lib/auth/plac.ts
+
+import type { Role } from './rbac';
+import { ROLE_LEVEL } from './rbac';
+
+export interface PageAccessMap {
+  /** Map of page path → boolean access. True = allowed, False = denied */
+  pages: Record<string, boolean>;
+  /** Unix ms timestamp of when this map was computed */
+  computedAt: number;
+  /** The user's role at time of computation (for staleness detection) */
+  role: Role;
+}
+
+/**
+ * Compute full access map for a user by merging role defaults + overrides.
+ * Called at login and when a provisioning change targets this user.
+ * 
+ * Cost: 1 D1 query (batched JOIN), ~2ms. Cached in KV for 1 hour.
+ */
+export async function computeAccessMap(
+  db: D1Database,
+  userId: string,
+  userRole: Role
+): Promise<PageAccessMap> {
+  // Single batched query: all pages LEFT JOIN user's overrides
+  const result = await db.prepare(`
+    SELECT 
+      p.path,
+      p.required_role,
+      o.granted
+    FROM admin_pages p
+    LEFT JOIN admin_page_overrides o 
+      ON o.user_id = ?1 AND o.page_path = p.path
+    WHERE p.is_active = 1
+    ORDER BY p.sort_order
+  `).bind(userId).all<{
+    path: string;
+    required_role: Role;
+    granted: number | null;
+  }>();
+
+  const pages: Record<string, boolean> = {};
+  
+  for (const row of result.results) {
+    if (row.granted === 0) {
+      // DENY override — always wins, regardless of role
+      pages[row.path] = false;
+    } else if (row.granted === 1) {
+      // GRANT override — explicit access
+      pages[row.path] = true;
+    } else {
+      // No override — fall back to role hierarchy
+      pages[row.path] = ROLE_LEVEL[userRole] <= ROLE_LEVEL[row.required_role as Role];
+    }
+  }
+
+  return {
+    pages,
+    computedAt: Date.now(),
+    role: userRole,
+  };
+}
+
+/**
+ * Get access map from KV cache. Returns null on miss.
+ * Key format: plac:{userId}
+ * TTL: 3600s (1 hour)
+ */
+export async function getCachedAccessMap(
+  kv: KVNamespace,
+  userId: string
+): Promise<PageAccessMap | null> {
+  const raw = await kv.get(`plac:${userId}`, { type: 'json' });
+  return raw as PageAccessMap | null;
+}
+
+/**
+ * Write access map to KV cache.
+ */
+export async function cacheAccessMap(
+  kv: KVNamespace,
+  userId: string,
+  map: PageAccessMap
+): Promise<void> {
+  await kv.put(`plac:${userId}`, JSON.stringify(map), {
+    expirationTtl: 3600, // 1 hour
+  });
+}
+
+/**
+ * Invalidate a user's cached access map (called after provisioning changes).
+ */
+export async function invalidateAccessMap(
+  kv: KVNamespace,
+  userId: string
+): Promise<void> {
+  await kv.delete(`plac:${userId}`);
+}
+
+/**
+ * Check if a user can access a specific page path.
+ * Uses the cached access map (KV) — zero D1 queries.
+ * Falls back to role hierarchy if path not in map.
+ * 
+ * Cost: <0.3ms (KV read + object lookup)
+ */
+export function checkPageAccess(
+  accessMap: PageAccessMap,
+  pathname: string
+): boolean {
+  // Exact match
+  if (pathname in accessMap.pages) {
+    return accessMap.pages[pathname];
+  }
+  
+  // Prefix match (for sub-routes like /dashboard/content/gallery)
+  const paths = Object.keys(accessMap.pages)
+    .sort((a, b) => b.length - a.length);
+  
+  for (const registeredPath of paths) {
+    if (pathname.startsWith(registeredPath + '/') || pathname === registeredPath) {
+      return accessMap.pages[registeredPath];
+    }
+  }
+
+  // Unknown page — deny by default
+  return false;
+}
+```
+
+### 4.5 Middleware Integration
+
+The middleware is updated to check PLAC on every request:
+
+```typescript
+// Updated middleware.ts flow (pseudocode)
+
+// After session validation...
+const session = await getSession(context);
+
+// 1. Get or compute PLAC access map
+let accessMap = await getCachedAccessMap(env.SESSION, session.userId);
+
+if (!accessMap || accessMap.role !== session.role) {
+  // Cache miss or role changed — recompute from D1
+  accessMap = await computeAccessMap(env.DB, session.userId, session.role);
+  // Cache in background (don't block response)
+  context.locals.runtime.waitUntil(
+    cacheAccessMap(env.SESSION, session.userId, accessMap)
+  );
+}
+
+// 2. Check page access (O(1) hashmap lookup — <0.1ms)
+if (!checkPageAccess(accessMap, pathname)) {
+  return context.redirect('/dashboard?error=insufficient_permissions');
+}
+
+// 3. Inject into locals for downstream pages/islands
+context.locals.user = { ...session, accessMap: accessMap.pages };
+```
+
+### 4.6 Provisioning API (Hierarchy-Enforcing)
+
+```
+POST /api/users/access
+Content-Type: application/json
+
+{
+  "targetUserId": "uuid-xxx",
+  "pagePath": "/dashboard/content",
+  "action": "grant" | "revoke" | "reset",
+  "reason": "Needed for content updates during Q2 campaign"
+}
+```
+
+**Server-side hierarchy enforcement rules:**
+
+```typescript
+// src/pages/api/users/access.ts — Provisioning endpoint
+
+// Rule 1: Actor must have higher role level than target
+if (ROLE_LEVEL[actorRole] >= ROLE_LEVEL[targetRole]) {
+  return error(403, 'Cannot modify access for users at or above your level');
+}
+
+// Rule 2: Actor must have access to the page they're granting
+if (!checkPageAccess(actorAccessMap, pagePath)) {
+  return error(403, 'Cannot grant access to pages you do not have access to');
+}
+
+// Rule 3: DEV users are "ghosts" — invisible to SuperAdmin and below
+if (targetRole === 'dev' && actorRole !== 'dev') {
+  return error(403, 'Cannot modify DEV user access');
+}
+
+// Rule 4: Cannot elevate target above their role's natural ceiling
+// (e.g., granting a Staff user DEV-only pages would require DEV actor)
+const pageDefinition = await getPageDefinition(db, pagePath);
+if (ROLE_LEVEL[actorRole] > ROLE_LEVEL[pageDefinition.required_role]) {
+  return error(403, 'Cannot grant access to pages above your clearance');
+}
+```
+
+### 4.7 Auto-Reset on Role Change
+
+When a user's role changes (e.g., Staff → Admin), their overrides are automatically cleared because a new role implies a new access baseline:
+
+```typescript
+// When role changes, reset all overrides and rebuild access map
+async function onRoleChange(db: D1Database, kv: KVNamespace, userId: string, newRole: Role) {
+  // 1. Delete all existing overrides for this user
+  await db.prepare('DELETE FROM admin_page_overrides WHERE user_id = ?')
+    .bind(userId).run();
+  
+  // 2. Invalidate cached access map (forces recompute on next request)
+  await invalidateAccessMap(kv, userId);
+  
+  // 3. Audit the reset
+  // (audit entry is logged by the caller via ctx.waitUntil)
+}
+```
+
+### 4.8 UI: Page Access Manager (Preact Island)
+
+**File:** `src/components/admin/users/PageAccessManager.tsx`
+
+The UI renders a responsive toggle grid showing all pages with their access state for a target user. Built with Preact + Signals for reactive updates.
+
+**Desktop Layout:** 2-column grid with page cards showing name, icon, current access, and toggle  
+**Mobile Layout:** Full-width stacked cards with touch-friendly toggle switches  
+**Tailwind v4 styling:** Obsidian Clarity V4 tokens, glassmorphic cards, violet accents
+
+**Key UI behaviors:**
+- Pages the actor cannot modify are shown **locked** (grayed out with lock icon)
+- Override state is shown distinctly: "Role Default" vs "Explicit Grant" vs "Explicit Deny"
+- Changes save immediately via optimistic UI (toggle flips instantly, API call in background)
+- Toast notification confirms success or shows hierarchy violation error
+- The "Reset" button removes the override and reverts to role default
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  🔐 Page Access for: Maria García (Admin)               │
+│  ┌──────────────────────┐ ┌──────────────────────────┐  │
+│  │ 📊 Dashboard         │ │ 📅 Bookings              │  │
+│  │ ● Role Default       │ │ ● Role Default           │  │
+│  │ [====ON====]         │ │ [====ON====]             │  │
+│  └──────────────────────┘ └──────────────────────────┘  │
+│  ┌──────────────────────┐ ┌──────────────────────────┐  │
+│  │ 🎨 Content Studio    │ │ 📜 Activity Logs         │  │
+│  │ ● Role Default       │ │ ● Role Default           │  │
+│  │ [====ON====]         │ │ [====ON====]             │  │
+│  └──────────────────────┘ └──────────────────────────┘  │
+│  ┌──────────────────────┐ ┌──────────────────────────┐  │
+│  │ 👥 User Management   │ │ ⚙️ Settings              │  │
+│  │ 🔒 Above clearance   │ │ 🔒 Above clearance       │  │
+│  │ [---LOCKED---]       │ │ [---LOCKED---]           │  │
+│  └──────────────────────┘ └──────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 4.9 PLAC Performance Budget
+
+| Operation | When | CPU Cost | D1 Queries |
+|-----------|------|----------|------------|
+| Access check (middleware) | Every request | <0.3ms (KV read + hashmap lookup) | 0 |
+| Access map computation | Login + provisioning change | ~2ms | 1 (batched JOIN) |
+| KV cache write | After computation | ~0.5ms | 0 |
+| Provisioning API | On grant/revoke action | ~3ms | 2 (validate + upsert) |
+| KV cache invalidation | After provisioning | ~0.2ms | 0 |
+
+**Total middleware overhead per request: <0.5ms** (well within 10ms CPU limit)
+
+---
+
+## 5. PHASE 3 — ASTRO VIEW TRANSITIONS (SPA-FEEL NAVIGATION)
+
+> **Priority:** MEDIUM — Enhances perceived performance dramatically.
+
+### 5.1 What It Does
+
+Astro's native View Transitions API gives SPA-like instant page navigation without any custom JavaScript. Pages morph between states with cross-fade animations, and the browser handles DOM diffing automatically.
+
+### 5.2 Implementation
+
+**One line in the admin layout:**
+
+```astro
+---
+// src/layouts/AdminLayout.astro
+import { ViewTransitions } from 'astro:transitions';
+---
+<html>
+  <head>
+    <ViewTransitions />
+  </head>
+  <body>
+    <!-- Sidebar, TopBar, Content -->
+    <slot />
+  </body>
+</html>
+```
+
+### 5.3 Why This Replaces Custom Fragment Orchestration
+
+| Aspect | Custom Fragments (Original Plan) | View Transitions (This Plan) |
+|--------|--------------------------------|------------------------------|
+| JavaScript needed | ~15-20 KB custom loader + DOM swap logic | 0 KB (browser-native) |
+| Hydration risk | High — Preact islands can desync | Zero — Astro manages islands |
+| Animation | Manual CSS transitions | Browser-native morphing |
+| Prefetching | Manual `fetch()` calls | Automatic `<link rel="prefetch">` |
+| SSR compatibility | Complex — must handle partial HTML | Built-in — designed for SSR |
+
+### 5.4 Sidebar Navigation Enhancement
+
+With View Transitions, sidebar links become instant:
+
+```astro
+<!-- Sidebar link with transition animation -->
+<a href="/dashboard/content" 
+   transition:name="main-content"
+   class="sidebar-link">
+  Content Studio
+</a>
+```
+
+The main content area morphs between pages. The sidebar and topbar persist across navigations — true SPA feel with zero custom code.
+
+---
+
+## 6. PHASE 4 — GHOST AUDIT ENGINE (ctx.waitUntil LOGGING)
+
+> **Priority:** HIGH — Critical for security and compliance.
+
+### 6.1 How It Works
+
+The Ghost Audit Engine uses Cloudflare Workers' `ctx.waitUntil()` to log every admin action **after** the HTTP response is sent. The user sees instant feedback; the audit log writes happen in the background.
+
+```
+User clicks "Save" → API processes → Response sent → User sees "✅ Saved!"
+                                                        │
+                                              (connection closed)
+                                                        │
+                                              Worker stays alive ──→ D1 INSERT audit log
+                                              (invisible to user)
+```
+
+### 6.2 D1 Audit Table
+
+```sql
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id TEXT NOT NULL,
+  user_email TEXT NOT NULL,
+  user_role TEXT NOT NULL,
+  action TEXT NOT NULL,
+  module TEXT NOT NULL,
+  target_id TEXT,
+  target_type TEXT,
+  details TEXT,
+  ip_hash TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_user 
+  ON admin_audit_log (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_module 
+  ON admin_audit_log (module, created_at DESC);
+```
+
+### 6.3 Audit Helper
+
+```typescript
+// src/lib/audit.ts
+
+export interface AuditEntry {
+  userId: string;
+  userEmail: string;
+  userRole: string;
+  action: string;      // 'create' | 'update' | 'delete' | 'login' | 'logout' | 'grant_access' | 'revoke_access'
+  module: string;      // 'auth' | 'users' | 'content' | 'bookings' | 'settings' | 'plac'
+  targetId?: string;
+  targetType?: string;
+  details?: string;
+  ipHash?: string;
+}
+
+/**
+ * Fire-and-forget audit log via ctx.waitUntil().
+ * Runs AFTER the response is sent — zero user latency.
+ * Uses D1 prepared statements to stay under 10ms CPU.
+ */
+export function auditLog(
+  ctx: ExecutionContext,
+  db: D1Database,
+  entry: AuditEntry
+): void {
+  ctx.waitUntil(
+    db.prepare(`
+      INSERT INTO admin_audit_log 
+        (user_id, user_email, user_role, action, module, target_id, target_type, details, ip_hash)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+    `).bind(
+      entry.userId,
+      entry.userEmail,
+      entry.userRole,
+      entry.action,
+      entry.module,
+      entry.targetId ?? null,
+      entry.targetType ?? null,
+      entry.details ?? null,
+      entry.ipHash ?? null,
+    ).run()
+  );
+}
+```
+
+### 6.4 Usage in API Endpoints
+
+```typescript
+// Example: PLAC provisioning audit
+auditLog(ctx, env.DB, {
+  userId: actor.userId,
+  userEmail: actor.email,
+  userRole: actor.role,
+  action: 'grant_access',
+  module: 'plac',
+  targetId: targetUserId,
+  targetType: 'user',
+  details: JSON.stringify({ page: pagePath, reason }),
+  ipHash: hashIP(request.headers.get('cf-connecting-ip')),
+});
+```
+
+### 6.5 Audit Performance
+
+| Metric | Value |
+|--------|-------|
+| User-perceived latency added | **0ms** (post-response) |
+| D1 writes consumed per action | 1 row |
+| Daily budget (100K writes) | ~100,000 admin actions/day |
+| Storage per log entry | ~200 bytes |
+| 1 year of logs @ 100 actions/day | ~7 MB (well within 5GB D1 limit) |
+
+### 6.6 DEV-Only Log Pruning
+
+Audit logs are immutable — no user (including SuperAdmin) can delete them. Only DEV-level users can trigger a purge via a protected endpoint:
+
+```
+POST /api/audit/prune (DEV only)
+→ Archives logs older than 6 months to R2 as compressed JSON
+→ Deletes archived rows from D1
+→ Logs the prune action itself to the audit log
+```
+
+---
+
+## 7. PHASE 5 — HTTP CACHING & ETAG STRATEGY
+
+> **Priority:** LOW — Optimization for reducing D1 reads on repeated API calls.
+
+### 7.1 How It Replaces IndexedDB + SWR
+
+Instead of building a client-side IndexedDB vault with Web Crypto encryption (100+ KB of JavaScript), we use standard HTTP caching headers that browsers handle natively with **zero client code**:
+
+```typescript
+// API response with caching headers
+const data = await fetchFromD1(env.DB);
+const etag = `"${hashData(data)}"`;
+
+// Check if client already has this version
+if (request.headers.get('If-None-Match') === etag) {
+  return new Response(null, { status: 304 }); // Not Modified — 0 bytes sent
+}
+
+return new Response(JSON.stringify(data), {
+  headers: {
+    'Content-Type': 'application/json',
+    'ETag': etag,
+    'Cache-Control': 'private, max-age=60, stale-while-revalidate=300',
+  },
+});
+```
+
+### 7.2 Comparison
+
+| Strategy | JS Bundle | CPU per revisit | Complexity |
+|----------|-----------|----------------|------------|
+| IndexedDB + SWR + Crypto (original plan) | ~100-150 KB | ~15ms (parse + decrypt + merge) | Very High |
+| **HTTP ETag + Cache-Control (this plan)** | **0 KB** | **~0.5ms (304 check)** | **Trivial** |
+
+---
+
+## 8. PHASE 6 — PREACT SIGNALS (INTER-ISLAND REACTIVITY)
+
+> **Priority:** LOW — Only needed when multiple islands on one page need to communicate.
+
+### 8.1 What It Solves
+
+When the "User Management" Preact island updates a user's role, the "Activity Feed" island on the same page should reflect the change.
+
+### 8.2 Implementation
+
+```typescript
+// src/lib/signals.ts
+import { signal } from '@preact/signals';
+
+/** Shared reactive state between Preact islands */
+export const userUpdated = signal<string | null>(null);
+export const toastMessage = signal<{ type: 'success' | 'error'; text: string } | null>(null);
+```
+
+Both islands import from the same shared module. When one island writes to the signal, the other re-renders automatically. **1 KB total, type-safe, no event bus complexity.**
+
+---
+
+## 9. FEATURE-SLICED MODULE ARCHITECTURE (ACTIVE)
+
+> **Status:** ACTIVE — 30 pages across ~15 modules triggers this pattern.
+
+With 30 pages, domain-grouped module organization is essential for maintainability. Each module owns its pages, components, and API handlers as a self-contained unit. Removing a feature = deleting its folder + its entry in `admin_pages`.
+
+### 9.1 Module Map (The "Lego Bricks")
+
+```
+src/
+├── pages/dashboard/
+│   ├── index.astro                    ← Dashboard home
+│   ├── bookings/
+│   │   ├── index.astro                ← Booking list/calendar
+│   │   └── [id].astro                 ← Booking detail (future)
+│   ├── customers/
+│   │   └── index.astro                ← Customer profiles
+│   ├── pets/
+│   │   └── index.astro                ← Pet records
+│   ├── content/
+│   │   ├── index.astro                ← Content Studio hub
+│   │   ├── hero.astro                 ← Hero editor
+│   │   ├── gallery.astro              ← Gallery manager
+│   │   ├── services.astro             ← Services editor
+│   │   ├── pricing.astro              ← Pricing tables
+│   │   ├── testimonials.astro         ← Testimonials
+│   │   ├── faq.astro                  ← FAQ editor
+│   │   └── about.astro                ← About page editor
+│   ├── analytics/
+│   │   └── index.astro                ← Analytics dashboard
+│   ├── reports/
+│   │   └── index.astro                ← Financial reports
+│   ├── logs/
+│   │   └── index.astro                ← Activity audit logs
+│   ├── users/
+│   │   └── index.astro                ← User management + PLAC
+│   ├── settings/
+│   │   ├── index.astro                ← General settings
+│   │   ├── email.astro                ← Email templates
+│   │   └── integrations.astro         ← Third-party connections
+│   └── debug/
+│       └── index.astro                ← Dev tools (DEV only)
+├── components/
+│   ├── admin/
+│   │   ├── bookings/                  ← Booking-specific Preact islands
+│   │   ├── customers/                 ← Customer Preact islands
+│   │   ├── pets/                      ← Pet management islands
+│   │   ├── content/                   ← CMS Preact islands (GalleryManager, etc.)
+│   │   ├── analytics/                 ← Analytics chart islands
+│   │   ├── users/                     ← User management + PageAccessManager
+│   │   └── settings/                  ← Settings form islands
+│   ├── navigation/                    ← Sidebar, TopBar
+│   ├── dashboard/                     ← Home dashboard widgets
+│   └── ui/                            ← Shared UI primitives (Toast, Modal, etc.)
+├── pages/api/
+│   ├── auth/                          ← Auth callbacks
+│   ├── users/                         ← User management + PLAC provisioning
+│   ├── content/                       ← CMS content APIs
+│   └── media/                         ← Media upload/gallery APIs
+└── lib/
+    ├── auth/                          ← RBAC, PLAC, sessions, guards
+    └── audit.ts                       ← Ghost Audit Engine
+```
+
+### 9.2 Module Isolation Rules
+
+1. **Pages** live in `src/pages/dashboard/{module}/` — Astro handles routing
+2. **Preact islands** live in `src/components/admin/{module}/` — co-located with their domain
+3. **API routes** live in `src/pages/api/{module}/` — server-side handlers
+4. **Shared UI** lives in `src/components/ui/` — reusable across all modules
+5. **Auth + PLAC** lives in `src/lib/auth/` — the "Baseplate" that gates all modules
+6. Adding a module = create folder + add to `admin_pages` table + add to registry
+7. Removing a module = delete folder + remove from `admin_pages` + remove from registry
+
+### 9.3 The "Baseplate" Principle
+
+The auth system (middleware + PLAC + registry) is the "Lego baseplate." It doesn't care what modules exist — it reads from `admin_pages` (D1) and enforces access. New bricks snap in without modifying the baseplate.
+
+```
+┌─────────────────────────────────────────────────┐
+│           BASEPLATE (Auth Middleware)            │
+│  registry.ts + plac.ts + middleware.ts           │
+│  Reads admin_pages from D1 → enforces access    │
+├──────┬──────┬──────┬──────┬──────┬──────┬───────┤
+│ 📊   │ 📅   │ 🎨   │ 👥   │ ⚙️   │ 📈   │ 🐛   │
+│ Home │ Book │ CMS  │Users │ Set  │ Ana  │Debug  │
+│      │ ings │      │      │tings │lytics│       │
+└──────┴──────┴──────┴──────┴──────┴──────┴───────┘
+  Each brick is a self-contained module folder.
+  The baseplate enforces access for ALL bricks.
+```
+
+---
+
+## 10. SCALE-UP VAULT — ENTERPRISE FEATURES (DEFERRED)
+
+> **Status:** Documented for when cf-admin scales to 100+ users.
+
+These features are architecturally sound but not yet needed. Each has a **trigger condition**.
+
+### 10.1 Bitmask Entitlements
+
+**Trigger:** When you need >20 granular sub-feature permissions within the same page.
+
+```typescript
+// Future: Sub-feature gating within a page
+const CAN_VIEW    = 0b0001;
+const CAN_EDIT    = 0b0010;
+const CAN_DELETE  = 0b0100;
+const CAN_EXPORT  = 0b1000;
+if (user.permissionMask & CAN_DELETE) { /* show delete button */ }
+```
+
+### 10.2 IndexedDB + SWR + Web Crypto Vault
+
+**Trigger:** 100+ concurrent users approaching D1 5M read/day limit, OR offline admin access needed.
+
+### 10.3 Custom Fragment Orchestration / MFE Loader
+
+**Trigger:** 50+ pages and initial JS exceeds 100KB despite Astro's code splitting.
+
+### 10.4 Global Event Bus
+
+**Trigger:** 10+ islands on one page with complex cross-dependencies.
+
+---
+
+## 11. RISK ANALYSIS & CPU BUDGET
+
+### 11.1 CPU Budget per Request (10ms limit)
+
+```
+CURRENT (without PLAC):
+  Session KV read:    ~0.5ms
+  JWT validation:     ~0.2ms
+  Registry lookup:    ~0.1ms
+  SSR render:         ~3-5ms
+  D1 data query:      ~2-4ms
+  ─────────────────────────
+  TOTAL:              ~6-10ms ✅
+
+WITH PLAC (30 pages, ~20 entries in access map):
+  Session KV read:    ~0.5ms
+  JWT validation:     ~0.2ms
+  PLAC KV read:       ~0.3ms  ← NEW (cached access map, ~2KB JSON)
+  Page access check:  ~0.1ms  ← NEW (hashmap lookup, O(1))
+  SSR render:         ~3-5ms
+  D1 data query:      ~2-4ms
+  ─────────────────────────
+  TOTAL:              ~6-10ms ✅ (PLAC adds only ~0.4ms even at 30 pages)
+```
+
+> **Note:** The access map grows linearly with pages. At 30 pages, the KV-stored JSON is ~2KB — well within KV's 25MB value limit. The hashmap lookup remains O(1) regardless of page count.
+
+### 11.2 KV Budget (1,000 writes/day)
+
+| Operation | KV Writes |
+|-----------|-----------|
+| Session create (login) | 1 per login |
+| PLAC cache write | 1 per login + 1 per provisioning change |
+| Session refresh | 1 per 30-min refresh |
+| PLAC invalidation | 1 per provisioning change |
+| **Daily total @ 10 users, 5 provisioning changes** | **~75 writes** (well within 1,000) |
+
+### 11.3 D1 Budget (100,000 writes/day)
+
+| Operation | D1 Writes |
+|-----------|-----------|
+| Audit log entries | 1 per admin action |
+| PLAC overrides | 1 per grant/revoke |
+| CMS updates | ~5-20 per day |
+| **Daily total** | **~100-500 writes** (well within 100,000) |
+
+### 11.4 Risk Mitigation
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| KV cache miss → D1 fallback on every request | 🟡 Medium | `waitUntil()` background cache rebuild; 1hr TTL |
+| PLAC map stale after role change | 🟡 Medium | Role change triggers `invalidateAccessMap()` |
+| Cold start CPU spike | 🟡 Medium | Keep middleware logic simple; no dynamic imports |
+| Audit log D1 storage growth | 🟢 Low | 6-month auto-archive to R2 via CRON |
+
+---
+
+## 12. FILE MAP & IMPLEMENTATION ORDER
+
+### 12.1 New Files to Create
+
+| # | File | Purpose | Phase |
+|---|------|---------|-------|
+| 1 | `src/lib/auth/plac.ts` | PLAC core: compute, cache, check access maps | Phase 2 |
+| 2 | `src/pages/api/users/access.ts` | PLAC provisioning API (grant/revoke/reset) | Phase 2 |
+| 3 | `src/components/admin/users/PageAccessManager.tsx` | Preact island: page access toggle grid | Phase 2 |
+| 4 | `src/lib/audit.ts` | Ghost audit engine helper | Phase 4 |
+| 5 | `src/lib/signals.ts` | Shared Preact Signals for inter-island reactivity | Phase 6 |
+
+### 12.2 Files to Modify
+
+| # | File | Change | Phase |
+|---|------|--------|-------|
+| 1 | `src/middleware.ts` | Add PLAC access check after session validation | Phase 2 |
+| 2 | `src/lib/auth/session.ts` | Compute + cache PLAC map on session create | Phase 2 |
+| 3 | `src/lib/auth/registry.ts` | Sync `ROUTE_REGISTRY` with `admin_pages` D1 table | Phase 2 |
+| 4 | `src/layouts/AdminLayout.astro` | Add `<ViewTransitions />` | Phase 3 |
+| 5 | `src/pages/api/users/manage.ts` | Add audit logging via `auditLog()` | Phase 4 |
+| 6 | `src/pages/dashboard/users/index.astro` | Add PageAccessManager island | Phase 2 |
+
+### 12.3 D1 Migrations
+
+| # | Migration | Phase |
+|---|-----------|-------|
+| 1 | `create_admin_pages_table` | Phase 2 |
+| 2 | `create_admin_page_overrides_table` | Phase 2 |
+| 3 | `seed_admin_pages` | Phase 2 |
+| 4 | `create_admin_audit_log_table` | Phase 4 |
+
+### 12.4 Implementation Order
+
+```
+STEP 1: D1 migrations (admin_pages, admin_page_overrides, admin_audit_log)
+STEP 2: src/lib/audit.ts (Ghost Audit Engine)
+STEP 3: src/lib/auth/plac.ts (PLAC core logic)
+STEP 4: Update src/middleware.ts (integrate PLAC check)
+STEP 5: Update src/lib/auth/session.ts (compute PLAC on login)
+STEP 6: src/pages/api/users/access.ts (provisioning API)
+STEP 7: src/components/admin/users/PageAccessManager.tsx (UI island)
+STEP 8: Update src/pages/dashboard/users/index.astro (mount island)
+STEP 9: Add <ViewTransitions /> to AdminLayout.astro
+STEP 10: Documentation in cf-admin/documentation/
+```
+
+---
+
+*End of Architecture Plan. This plan must be followed for all architectural decisions in cf-admin. Deferred features (Scale-Up Vault) should only be implemented when their trigger conditions are met.*
