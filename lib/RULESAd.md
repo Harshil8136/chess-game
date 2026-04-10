@@ -1,6 +1,6 @@
 # CF-ADMIN PROJECT — OPERATIONAL RULES & ARCHITECTURE BIBLE
 
-> **Last Updated:** 2026-04-07 (Sync Standardization)
+> **Last Updated:** 2026-04-10 (Lean Edge Infrastructure, Sentry Observability, & Content/User Audit Hardening)
 > **Research Sources:** Cloudflare Docs MCP, Supabase MCP, Cloudflare Bindings MCP, Tavily, Official Documentation
 
 ---
@@ -108,7 +108,7 @@ This is the **STRICTEST** rule and MUST be followed at ALL times:
 3. SuperAdmin/DEV adds users to the whitelist with assigned roles.
 4. **PLAC (Page-Level Access Control)** dynamically overlays explicit `GRANT` and `DENY` parameters to specific pages per user in D1 `admin_page_overrides`.
 5. Access Maps are evaluated via Cloudflare KV with O(1) reads taking <0.5ms on `middleware.ts`. "Deny" values strictly overrule all naturally inherited hierarchies.
-6. **Ghost Audit Engine** logs all sensitive mutations via `context.locals.runtime.waitUntil`. This occurs asynchronously after a 200 OK HTML payload fires back, preventing DB write latency from obstructing human UI experiences.
+6. **Ghost Audit Engine** logs all sensitive mutations (PLAC parsing, User Management, Content/Media updates) via `context.locals.runtime.waitUntil`. This occurs asynchronously after a 200 OK JSON payload fires back, preventing DB write latency from obstructing human UI experiences.
 7. GoTrue issues JWTs for valid auth attempts; application layer validates the JWT against KV caches and role definitions.
 
 ### Session Security
@@ -391,6 +391,11 @@ The dashboard implements a modular **Hover-Expand Sidebar**.
 - **Command Palette:** `Ctrl+K` triggers a robust search palette via Preact signals. Focus states utilize Midnight Slate cyan glow boundaries.
 - **TopBar:** Follows general glass logic (`blur(24px)`).
 
+#### Unbuilt Modules & Soft 404
+- Unbuilt portal paths (e.g. `/dashboard/customers` or `/dashboard/analytics`) are intercepted by a Catch-All spread route at `src/pages/dashboard/[...slug].astro`.
+- Because Astro resolves exact physical paths first, this route organically serves as a fallback.
+- It leverages the `AdminLayout` cleanly so that sidebar state is preserved, injecting a Midnight Slate "Module Under Construction" card in the main view rather than breaking the Single-Page Application sequence.
+
 #### Dashboard Widgets
 | Widget | Key Treatment |
 |--------|---------------|
@@ -592,6 +597,16 @@ The CMS Image Management system enables authorized admin users to upload and rep
 | `src/components/sections/Hero.astro` | cf-astro | Dynamic hero background |
 | `src/components/sections/Gallery.astro` | cf-astro | Dynamic gallery carousel |
 | `src/pages/api/revalidate.ts` | cf-astro | ISR cache purge webhook (receives calls from cf-admin) |
+
+### ⚠️ Critical Deployment Rules (DO NOT SKIP)
+
+1. **`REVALIDATION_SECRET` must be deployed on BOTH Workers.** The secret is the shared key that authenticates the revalidation webhook from cf-admin to cf-astro. If missing from cf-astro, the `/api/revalidate` endpoint returns 500, revalidation silently fails, and the live site serves stale HTML indefinitely.
+   ```bash
+   wrangler secret put REVALIDATION_SECRET --name cf-admin-madagascar  # sender
+   wrangler secret put REVALIDATION_SECRET --name cf-astro              # receiver
+   ```
+
+2. **Hero images use unique UUID R2 keys per upload** (e.g. `hero/hero-{uuid}.jpg`), matching the gallery pattern. This prevents Cloudflare's CDN from permanently serving a stale cached version after replacement. The `cacheControl` is `public, max-age=31536000` (without `immutable`) so manual purges remain possible.
 
 > 📖 **Full documentation:** [`documentation/CMS_IMAGE_MANAGEMENT.md`](./documentation/CMS_IMAGE_MANAGEMENT.md)
 
