@@ -52,27 +52,25 @@ While RBAC handles broad categorization natively, **PLAC** is a high-performance
 Querying D1 for page permissions on every single navigation event would consume 3–5ms of CPU time per click and create thousands of unnecessary SQL reads. PLAC avoids this entirely.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#e2e8f0', 'primaryBorderColor': '#334155', 'lineColor': '#475569', 'secondaryColor': '#0f172a', 'tertiaryColor': '#020617', 'noteBkgColor': '#0f172a', 'noteTextColor': '#38bdf8', 'noteBorderColor': '#0284c7'}}}%%
 sequenceDiagram
     autonumber
     actor User
-    participant Worker as Middleware (Worker)
-    participant KV as KV Namespace (SESSION)
-    participant D1 as D1 Database
+    participant Worker as ⚡ Middleware (Worker)
+    participant KV as 📦 Cloudflare KV
+    participant D1 as 🗄️ D1 Database
 
-    rect rgb(30, 41, 59)
-    Note over User,D1: Phase 1: Login / Provision Computation (Async)
-    User->>Worker: Logs in (or Admin overrides permissions)
-    Worker->>D1: Batched LEFT JOIN on admin_pages + admin_page_overrides
-    D1-->>Worker: Return combined permissions JSON Map
-    Worker->>KV: Serialize Map alongside JWT session
-    end
+    Note right of User: Phase 1: Login / Provisioning
+    User->>Worker: Authenticates via Auth API
+    Worker->>D1: JOIN admin_pages & overrides
+    D1-->>Worker: Return precomputed JSON Map
+    Worker->>KV: Serialize Map into Session cache
 
-    rect rgb(15, 23, 42)
-    Note over User,D1: Phase 2: Standard Navigation (Every click)
-    User->>Worker: GET /dashboard/settings
-    Worker->>KV: Retrieve JSON Map (O(1) Hashmap Lookup)
-    Worker-->>User: Grant or Deny (0 D1 queries, <0.3ms latency)
-    end
+    Note right of User: Phase 2: High-Speed Navigation
+    User->>Worker: User navigates to /dashboard/settings
+    Worker->>KV: Fetch isolated JSON Map
+    KV-->>Worker: O(1) Hashmap Lookup
+    Worker-->>User: Grant/Deny (Zero D1 Queries)
 ```
 
 ### 2.2 The D1 Schema Integration
@@ -125,22 +123,22 @@ Writing to a physical D1 SQL database takes approximately 5ms to 15ms. Waiting f
 **Solution:** Cloudflare's `ExecutionContext.waitUntil(promise)`.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#e2e8f0', 'primaryBorderColor': '#334155', 'lineColor': '#475569', 'secondaryColor': '#0f172a', 'tertiaryColor': '#020617', 'noteBkgColor': '#0f172a', 'noteTextColor': '#38bdf8', 'noteBorderColor': '#0284c7'}}}%%
 sequenceDiagram
     actor UI
-    participant API as Edge API Endpoint
-    participant V8 as Cloudflare V8 Runtime
-    participant D1 as D1 Database
+    participant API as 🚀 Edge API Endpoint
+    participant V8 as ⚙️ Cloudflare V8 Isolate
+    participant D1 as 🗄️ D1 Database
 
     UI->>API: POST /api/media/upload
-    API->>API: Process file logic
-    API-->>UI: HTTP 200 OK (Data saved) ⚡
+    API->>API: Execute local file logic
+    API-->>UI: HTTP 200 OK (Data Saved)
     
-    rect rgb(30, 41, 59)
-    Note right of API: User perceives ZERO latency.
-    Note right of API: API calls ctx.waitUntil(AuditLog)
-    API->>V8: Worker process kept alive "in background"
+    Note right of API: ⚡ User perceives ZERO Latency!
+    Note right of API: API invokes ctx.waitUntil(AuditLog)
+    
+    API->>V8: V8 Process execution kept alive post-response
     V8->>D1: Async SQL INSERT INTO admin_audit_log
-    end
 ```
 
 The user experiences unparalleled performance, while the security ledger remains mathematically uncompromised. Since Cloudflare V8 limits primarily govern the *HTTP response phase*, these background operations execute at effectively zero cost.
@@ -175,3 +173,17 @@ The engine specifically tracks unified JSON payloads representing every state mu
 * **Environment Vectors:** `ip_hash`
 
 By implementing this factory on every mutating API (`POST`, `PUT`, `DELETE`), CF-Admin provides enterprise-grade observability completely native to Cloudflare's serverless footprint.
+
+### 3.5 Ubiquitous Navigational Telemetry (Middleware Tracking)
+
+> [!TIP]
+> **The "In-Accessible Page" Tracer**
+> Traditional audit logs only track successful API actions. CF-Admin intercepts navigations at the core Astro `middleware.ts` to log both permitted views and **malicious probing**.
+
+Every non-API navigation inside the dashboard is intercepted:
+
+1. **Access Evaluation:** The middleware checks the PLAC map.
+2. **Synchronous Transition:** The user is either allowed to load the page or intercepted and bounced to a `403` error screen.
+3. **Ghost Telemetry:** The middleware fires an async `ctx.waitUntil()` task pushing an `action: 'view'` ledger entry. 
+
+Crucially, the `details` payload contains `granted: boolean`. This allows Devs to scan the audit table for `granted: false` to instantly uncover if a staff member was repeatedly attempting to access `/dashboard/settings` or restricted endpoints, providing holistic behavioral monitoring beyond just successful database mutations.
