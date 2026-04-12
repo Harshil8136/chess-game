@@ -1,11 +1,11 @@
 # 🛡️ System Architecture: RBAC, PLAC & Ghost Audit
 
 > [!NOTE]
-> **System Status:** Production Ready 
+> **System Status:** Production Ready
 > **Target Environment:** Cloudflare Workers V8 Isolates (Edge Computing)
-> **Last Updated:** April 2026
+> **Last Updated:** April 2026 (5-Tier RBAC + SHA-256 Audit Hash Chain)
 
-This document outlines the complete technical implementation, database schema integration, execution lifecycle, and operational rules for the **CF-Admin Security & Tracing Triad**: Hierarchical RBAC, Page-Level Access Control (PLAC), and the Ghost Audit Engine.
+This document outlines the complete technical implementation, execution lifecycle, and operational rules for the **CF-Admin Security & Tracing Triad**: Hierarchical RBAC, Page-Level Access Control (PLAC), and the Ghost Audit Engine.
 
 Designed specifically to operate within Cloudflare's strict 10ms–50ms CPU limits, this triad provides enterprise-grade administrative security with **zero user-perceived latency** and an effective **$0 infrastructure cost**.
 
@@ -15,18 +15,30 @@ Designed specifically to operate within Cloudflare's strict 10ms–50ms CPU limi
 
 RBAC forms the "natural baseline" of the CF-Admin authentication system. It assigns an absolute integer weight to users, establishing a rigid command hierarchy.
 
-### 1.1 The Role Hierarchy Matrix
+### 1.1 The 5-Tier Role Hierarchy Matrix
 
 Defined centrally in `src/lib/auth/rbac.ts`, roles are scored such that a **lower number equals higher privilege**. Any permission check evaluates if `ActorLevel <= TargetLevel`.
 
-| Level | Role | Identifier | Capabilities | Badge UI | Target Audience |
-| :---: | :--- | :--- | :--- | :---: | :--- |
-| **0** | **DEV (Ghost)** | `dev` | **Absolute System Supremacy.** Can execute database prunes, mutate other devs, and view raw cryptolocked logs. Hidden entirely from lower tiers. | ⚡ Red | System Architects |
-| **1** | **Super Admin** | `super_admin` | **Owner-Level Access.** Can manage users, alter global settings, and grant privileges *at or below* their natural level. | 👑 Gold | Business Owners |
-| **2** | **Admin** | `admin` | **Manager-Level Access.** Can manage content (Hero, Gallery, Reviews), view customers, and read generalized audit logs. | 🛡️ Purple | Operations Managers |
-| **3** | **Staff** | `staff` | **Restricted Access.** Designed for read-only operations and basic daily front-desk interactions. | 👤 Blue | Front Desk & Support |
+| Level | Role | Identifier | Capabilities | Badge Color | Icon | Target Audience |
+| :---: | :--- | :--- | :--- | :--- | :---: | :--- |
+| **0** | **DEV (Ghost)** | `dev` | **Absolute System Supremacy.** Can execute database prunes, create hidden accounts, mutate other devs, and view raw cryptolocked logs. Hidden entirely from lower tiers. | Red (`#ef4444`) | ⚡ | System Architects |
+| **1** | **Owner** | `owner` | **Project Ownership.** Can manage billing, API keys, and view all hidden accounts. Protected from modification by SuperAdmin and below. | Emerald (`#10b981`) | 💎 | Business Owners |
+| **2** | **Super Admin** | `super_admin` | **Full Operational Access.** Can manage users (at or below their level), alter global settings, and grant PLAC privileges. Cannot see hidden accounts. | Amber (`#f59e0b`) | 👑 | Senior Managers |
+| **3** | **Admin** | `admin` | **Manager-Level Access.** Can manage content (Hero, Gallery, Reviews), view customers, and read generalized audit logs. | Purple (`#8b5cf6`) | 🛡️ | Operations Managers |
+| **4** | **Staff** | `staff` | **Restricted Access.** Designed for read-only operations and basic daily front-desk interactions. | Blue (`#3b82f6`) | 👤 | Front Desk & Support |
 
-### 1.2 The Hardcoded Emergency Fallback
+### 1.2 Color System: Thermal Gradient
+
+Badge colors follow a deliberate **thermal gradient** for dark UI legibility:
+
+```
+🔴 Red (danger/system) → 💚 Emerald (ownership) → 🟠 Amber (authority)
+→ 🟣 Purple (management) → 🔵 Blue (operations)
+```
+
+Each role has full display metadata exposed via `ROLE_META` in `rbac.ts` including `color`, `bgColor`, `icon`, and `label`.
+
+### 1.3 The Hardcoded Emergency Fallback
 
 > [!CAUTION]
 > **Anti-Lockout Mechanism**
@@ -34,12 +46,25 @@ Defined centrally in `src/lib/auth/rbac.ts`, roles are scored such that a **lowe
 
 ```typescript
 export const SUPER_ADMIN_EMAILS = [
-  'harshil.8136@gmail.com', 
+  'harshil.8136@gmail.com',
   'team@madagascarhotelags.com'
 ] as const;
 ```
 
 If an authenticated email matches the array above, the Cloudflare worker natively forces `super_admin` properties during token minting, bypassing the D1 role validation entirely.
+
+### 1.4 Helper Functions
+
+| Function | File | Description |
+|----------|------|-------------|
+| `hasPermission(userRole, requiredRole)` | `rbac.ts` | O(1) integer comparison — core gatekeeper |
+| `isDev(role)` | `rbac.ts` | Exact DEV check |
+| `isOwner(role)` | `rbac.ts` | Owner or higher (DEV/Owner) |
+| `isOwnerOrDev(role)` | `rbac.ts` | Specific check for hidden account visibility |
+| `isSuperAdmin(role)` | `rbac.ts` | SuperAdmin or higher |
+| `isAdmin(role)` | `rbac.ts` | Admin or higher |
+| `isValidRole(value)` | `rbac.ts` | Type guard for string validation |
+| `isHardcodedSuperAdmin(email)` | `rbac.ts` | Anti-lockout fallback check |
 
 ---
 
@@ -75,20 +100,21 @@ sequenceDiagram
 
 ### 2.2 The D1 Schema Integration
 
-PLAC relies on two specific tables tightly entwined via Foreign Keys:
+PLAC relies on two specific tables in D1:
 
 * **Table A: `admin_pages`** (The Source of Truth for Routing)
   Defines every page that exists in the interface (`path`, `required_role`, `is_active`).
+  The `required_role` column uses a CHECK constraint validating against all 5 roles: `'dev', 'owner', 'super_admin', 'admin', 'staff'`.
 
 * **Table B: `admin_page_overrides`** (The Delta State)
   Holds specific overrides from the natural hierarchy via composite keys (`user_id` + `page_path`) and a boolean `granted` parameter.
 
 ### 2.3 The "Deny Wins" Resolution Algorithm
 
-When the `computeAccessMap` function fires, it resolves the permissions down to a boolean through strict precedence logic (where O(n) = number of pages):
+When the `computeAccessMap` function fires (in `src/lib/auth/plac.ts`), it resolves permissions through strict precedence:
 
 1. **Explicit DENY (`0`) Overrides:** ACCESS IS BLOCKED. Denies instantly overwrite the natural hierarchy.
-2. **Explicit GRANT (`1`) Overrides:** ACCESS IS ALLOWED. 
+2. **Explicit GRANT (`1`) Overrides:** ACCESS IS ALLOWED.
 3. **Implicit Role Default:** If no override row exists, the system relies on baseline mathematics: `user.RoleLevel <= page.RequiredLevel`.
 
 ### 2.4 Provisioning Gatekeepers (Anti-Escalation Measures)
@@ -98,8 +124,8 @@ When the `computeAccessMap` function fires, it resolves the permissions down to 
 
 * **Gate A: Rank Supremacy (`actorLevel < targetLevel`)**
   Administrators can never manipulate the access array of users at their own level or higher.
-* **Gate B: DEV Ghosting**
-  Users with the `dev` rank are intentionally dropped from UI payloads when requested by non-devs. The DEV cohort operates completely invisibly to standard administration.
+* **Gate B: DEV + Owner Ghosting**
+  Users with `dev` or `owner` rank are intentionally dropped from UI payloads when requested by non-devs. The DEV and Owner cohort operates completely invisibly to standard administration.
 * **Gate C: Page Visibility Check (`actorHasPage === true`)**
   Administrators cannot grant another user access to a page they cannot see themselves.
 * **Gate D: Natural Ceiling Enforcement**
@@ -107,8 +133,17 @@ When the `computeAccessMap` function fires, it resolves the permissions down to 
 
 ### 2.5 Auto-Purging Strategies
 
-* **Instant Discontinuation:** Modifying a user's PLAC map calls `forceLogoutUser(kv, targetId)`. Explicitly deleting the target's KV prefix triggers a cache miss on their next request, instantly forcing the new D1 rules to evaluate.
-* **Role Promotion Reset:** Changing a user's natural baseline role immediately triggers a `DELETE FROM admin_page_overrides`. A new role implies a new baseline; historical granular rules are destroyed to maintain logical database cleanliness.
+* **Instant Discontinuation:** Modifying a user's PLAC map calls `forceLogoutUser(kv, targetId)`. This uses a **reverse-mapping key** (`user-session:{userId}` → `sessionId`) for O(k) session destruction, avoiding the O(n) KV scan that would violate CPU limits at scale.
+* **Role Promotion Reset:** Changing a user's natural baseline role immediately triggers a `DELETE FROM admin_page_overrides WHERE user_id = ?`. A new role implies a new baseline; historical granular rules are destroyed to maintain logical database cleanliness.
+
+### 2.6 Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/auth/plac.ts` | Core PLAC module — `computeAccessMap()`, `checkPageAccess()`, KV cache helpers |
+| `src/pages/api/users/access.ts` | PLAC provisioning API — grant/revoke/reset with hierarchy enforcement |
+| `src/pages/api/users/access-data.ts` | Data fetcher for PageAccessManager UI (requires `super_admin+`) |
+| `src/components/admin/users/PageAccessManager.tsx` | Preact island — interactive toggle grid for per-user page overrides |
 
 ---
 
@@ -133,48 +168,87 @@ sequenceDiagram
     UI->>API: POST /api/media/upload
     API->>API: Execute local file logic
     API-->>UI: HTTP 200 OK (Data Saved)
-    
+
     Note right of API: ⚡ User perceives ZERO Latency!
     Note right of API: API invokes ctx.waitUntil(AuditLog)
-    
+
     API->>V8: V8 Process execution kept alive post-response
     V8->>D1: Async SQL INSERT INTO admin_audit_log
 ```
 
-The user experiences unparalleled performance, while the security ledger remains mathematically uncompromised. Since Cloudflare V8 limits primarily govern the *HTTP response phase*, these background operations execute at effectively zero cost.
+The user experiences unparalleled performance, while the security ledger remains mathematically uncompromised.
 
-### 3.2 Immutability at the Edge
+### 3.2 SHA-256 Hash Chain Integrity
+
+> [!IMPORTANT]
+> **Tamper Detection:** Each audit entry includes a `prev_hash` field — a SHA-256 hash chain linking every entry to its predecessor.
+
+The hash chain works as follows:
+1. Before inserting a new audit entry, the engine reads the most recent entry's `id` and `prev_hash`
+2. A chain input is computed: `"${prev.id}:${prev.prev_hash}:${entry.action}:${entry.userId}:${timestamp}"`
+3. The chain input is hashed via `crypto.subtle.digest('SHA-256', ...)`
+4. The first 8 bytes (16 hex chars) are stored as `prev_hash` on the new entry
+
+**If any row in the audit table is modified, deleted, or inserted out of sequence, the chain breaks.** This provides cryptographic tamper evidence without relying on external blockchain infrastructure.
+
+### 3.3 Immutability at the Edge
 
 > [!WARNING]
-> The `admin_audit_log` table explicitly allows `SELECT` and `INSERT`. **The API layer exposes NO `DELETE` or `UPDATE` endpoints.** 
+> The `admin_audit_log` table explicitly allows `SELECT` and `INSERT`. **The API layer exposes NO `DELETE` or `UPDATE` endpoints.**
 
-To modify a log, a malicious actor would require Cloudflare Dashboard-level administrative access to run raw D1 queries via the CLI. At the framework level, the ledger is computationally immutable. *(Note: `prune.ts` periodically flushes logs older than 6 months strictly into cold storage to maintain D1 sizing limits).*
+To modify a log, a malicious actor would require Cloudflare Dashboard-level administrative access to run raw D1 queries via the CLI. At the framework level, the ledger is computationally immutable.
 
-### 3.3 Privacy-Preserved Traceability (Edge IP Hashing)
+**Defense-in-Depth:** The `createAuditLogger()` factory validates the `tableName` config parameter against the `ALLOWED_AUDIT_TABLES` whitelist (`Set(['admin_audit_log'])`). Since D1 does not support parameterized table names, this prevents SQL injection even if the factory config surface is widened in future.
 
-We must trace if a singular geographic IP address is repeatedly attacking the API, but storing raw IPv4 data permanently violates global data privacy regulations (GDPR/LFPDPPP). 
+### 3.4 Privacy-Preserved Traceability (Edge IP Hashing)
 
-The `hashIP()` function solves this at the edge via **cryptographic blinding**:
+We must trace if a singular geographic IP address is repeatedly attacking the API, but storing raw IPv4 data permanently violates global data privacy regulations (GDPR/LFPDPPP).
 
-1. `cf-connecting-ip` is stripped from the request header natively.
-2. It is bound to a hardened Environment Secret (`IP_HASH_SECRET`).
-3. An **HMAC-SHA256 signature** is spawned via the V8 WebCrypto API.
-4. The result is safely truncated to 12 hex characters.
+The `hashIP()` function (in `src/lib/audit.ts`) solves this at the edge via **cryptographic blinding**:
+
+1. `cf-connecting-ip` is stripped from the request header natively
+2. It is bound to a hardened Environment Secret (`IP_HASH_SECRET`)
+3. An **HMAC-SHA256 signature** is spawned via the V8 WebCrypto API
+4. The result is safely truncated to 12 hex characters
 
 **The Privacy Result:** We can perfectly group abusive traffic *(e.g., "Hash `a4f89d` submitted 500 failed gallery uploads")* without ever saving the raw IP address. It neutralizes privacy liabilities even if the D1 database is entirely compromised. *(Note: Raw SHA-256 is insufficient here; the minimal 4.3B IPv4 space is easily cracked via rainbow tables. HMAC protects the signature).*
 
-### 3.4 Operational Payload Tracking
+> [!IMPORTANT]
+> **Deployment Requirement:** The `IP_HASH_SECRET` must be deployed via `wrangler secret put IP_HASH_SECRET`. If absent, all audit IP hashes silently resolve to `undefined`.
 
-The engine specifically tracks unified JSON payloads representing every state mutation in the administrative ecosystem:
+### 3.5 Typed Actions and Modules
+
+The audit system uses strict typed unions (not arbitrary strings) for maximum query reliability:
+
+**Actions (`AuditAction`):**
+`login`, `logout`, `create`, `update`, `delete`, `grant_access`, `revoke_access`, `reset_access`, `role_change`, `view`, `export`, `prune`, `force_logout`
+
+**Modules (`AuditModule`):**
+`auth`, `plac`, `users`, `content`, `bookings`, `customers`, `pets`, `settings`, `analytics`, `reports`, `logs`, `media`, `debug`, `system`
+
+### 3.6 Operational Payload Tracking
+
+The engine specifically tracks unified JSON payloads representing every state mutation:
 
 * **Identity Signatures:** `user_id`, `user_email`, `user_role`
-* **Behavior Vectors:** `action` (e.g., `login`, `revoke_access`, `update`), `module` (e.g., `plac`, `content`, `auth`)
+* **Behavior Vectors:** `action` (typed enum), `module` (typed enum)
 * **Impact Vectors:** `target_id`, `target_type`, `details` *(granular JSON tracking of exact element changes)*
 * **Environment Vectors:** `ip_hash`
+* **Integrity Chain:** `prev_hash` *(SHA-256 link to previous entry)*
 
-By implementing this factory on every mutating API (`POST`, `PUT`, `DELETE`), CF-Admin provides enterprise-grade observability completely native to Cloudflare's serverless footprint.
+### 3.7 Key Files
 
-### 3.5 Ubiquitous Navigational Telemetry (Middleware Tracking)
+| File | Purpose |
+|------|---------|
+| `src/lib/audit.ts` | Core audit module — `auditLog()`, `hashIP()`, `createAuditLogger()`, hash chain logic |
+| `src/middleware.ts` | Injects `X-Request-ID` via `crypto.randomUUID()` for audit correlation |
+| `src/pages/api/users/manage.ts` | User mutations — all logged with audit entries |
+| `src/pages/api/users/access.ts` | PLAC provisioning — grant/revoke actions logged |
+| `src/pages/api/content/blocks.ts` | CMS updates — logged with sanitized error responses |
+| `src/pages/api/media/upload.ts` | Media uploads — logged with R2 key tracking |
+| `src/pages/auth/callback.astro` | Login events — IP hashed, provider validated, session created |
+
+### 3.8 Ubiquitous Navigational Telemetry (Middleware Tracking)
 
 > [!TIP]
 > **The "In-Accessible Page" Tracer**
@@ -183,7 +257,7 @@ By implementing this factory on every mutating API (`POST`, `PUT`, `DELETE`), CF
 Every non-API navigation inside the dashboard is intercepted:
 
 1. **Access Evaluation:** The middleware checks the PLAC map.
-2. **Synchronous Transition:** The user is either allowed to load the page or intercepted and bounced to a `403` error screen.
-3. **Ghost Telemetry:** The middleware fires an async `ctx.waitUntil()` task pushing an `action: 'view'` ledger entry. 
+2. **Synchronous Transition:** The user is either allowed to load the page or bounced to a `403` error screen.
+3. **Ghost Telemetry:** The middleware fires an async `ctx.waitUntil()` task pushing an `action: 'view'` ledger entry.
 
-Crucially, the `details` payload contains `granted: boolean`. This allows Devs to scan the audit table for `granted: false` to instantly uncover if a staff member was repeatedly attempting to access `/dashboard/settings` or restricted endpoints, providing holistic behavioral monitoring beyond just successful database mutations.
+The `details` payload contains `granted: boolean`. This allows Devs to scan the audit table for `granted: false` to instantly uncover repeated unauthorized access attempts.
